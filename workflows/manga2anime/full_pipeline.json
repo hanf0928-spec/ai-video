@@ -1,0 +1,45 @@
+
+{
+  "metadata": {
+    "name": "漫画转漫剧完整工作流",
+    "description": "漫画加载 → 分格 → OCR → 分镜脚本 → 图生视频 的 ComfyUI 版本",
+    "version": "0.1.0",
+    "category": "manga2anime"
+  },
+  "1": {
+    "class_type": "MangaPanelLoader",
+    "inputs": {
+      "file_path": "${manga_file}",
+      "page_index": 0,
+      "panel_index": -1
+    }
+  },
+  "2": {
+    "class_type": "MangaOCRNode",
+    "inputs": {
+      "image": ["1", 0],
+      "lang": "ch",
+      "engine": "paddleocr"
+    }
+  },
+  "3": {
+    "class_type": "StoryboardLLMNode",
+    "inputs": {
+      "topic": "${topic}",
+      "episode_count": 1,
+      "shots_per_episode": 8,
+      "style": "日系动画",
+      "api_key": "${llm_api_key}"
+    }
+  },
+  "4": {
+    "class_type": "HailuoI2VNode",
+    "inputs": {
+      "image": ["1", 0],
+      "prompt": ["2", 0],
+      "duration": 6,
+      "resolution": "1080P",
+      "api_key": "${hailuo_api_key}"
+    }
+  }
+}

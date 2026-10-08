@@ -1,0 +1,27 @@
+
+{
+  "metadata": {
+    "name": "Seedance 2 图生视频",
+    "description": "使用自定义节点 SeedanceI2VNode 调用 Seedance 2 API",
+    "version": "0.1.0",
+    "category": "base"
+  },
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "${first_frame}" }
+  },
+  "2": {
+    "class_type": "SeedanceI2VNode",
+    "inputs": {
+      "image": ["1", 0],
+      "prompt": "${prompt}",
+      "duration": 5,
+      "ratio": "16:9",
+      "resolution": "1080P",
+      "api_key": "${api_key}",
+      "endpoint_id": "${endpoint_id}",
+      "model": "doubao-seedance-2-0-pro",
+      "seed": 0
+    }
+  }
+}

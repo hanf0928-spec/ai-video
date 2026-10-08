@@ -1,0 +1,25 @@
+
+{
+  "metadata": {
+    "name": "海螺 03 图生视频",
+    "description": "使用自定义节点 HailuoI2VNode 调用海螺03 API",
+    "version": "0.1.0",
+    "category": "base"
+  },
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "${first_frame}" }
+  },
+  "2": {
+    "class_type": "HailuoI2VNode",
+    "inputs": {
+      "image": ["1", 0],
+      "prompt": "${prompt}",
+      "duration": 6,
+      "resolution": "1080P",
+      "api_key": "${api_key}",
+      "model": "MiniMax-Hailuo-03",
+      "seed": 0
+    }
+  }
+}

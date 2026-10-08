@@ -1,0 +1,68 @@
+
+# ======== Web Framework ========
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+websockets==12.0
+
+# ======== Config & Validation ========
+pydantic==2.9.2
+pydantic-settings==2.5.2
+python-dotenv==1.0.1
+
+# ======== Database ========
+sqlalchemy==2.0.35
+aiosqlite==0.20.0
+alembic==1.13.3
+
+# ======== Task Queue ========
+celery==5.4.0
+redis==5.1.0
+flower==2.0.1
+
+# ======== HTTP Clients ========
+httpx==0.27.2
+aiohttp==3.10.8
+requests==2.32.3
+tenacity==9.0.0
+
+# ======== Image / PDF ========
+Pillow==10.4.0
+pdf2image==1.17.0
+opencv-python==4.10.0.84
+numpy==1.26.4
+
+# ======== OCR ========
+paddleocr==2.8.1
+paddlepaddle==2.6.1
+easyocr==1.7.1
+
+# ======== Video / Audio ========
+ffmpeg-python==0.2.0
+moviepy==1.0.3
+pydub==0.25.1
+
+# ======== LLM ========
+openai==1.51.0
+anthropic==0.34.2
+
+# ======== ML / Vision ========
+torch==2.4.1
+torchvision==0.19.1
+transformers==4.45.1
+scikit-learn==1.5.2
+ultralytics==8.3.2         # YOLO for panel detection
+
+# ======== Utils ========
+loguru==0.7.2
+orjson==3.10.7
+pyyaml==6.0.2
+tqdm==4.66.5
+rich==13.8.1
+cryptography==43.0.1
+
+# ======== Dev / Test ========
+pytest==8.3.3
+pytest-asyncio==0.24.0
+black==24.8.0
+ruff==0.6.9
