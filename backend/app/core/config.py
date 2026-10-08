@@ -46,7 +46,10 @@ class Settings(BaseSettings):
     #    详见 backend/app/services/config_service.py 中的 PROVIDER_SCHEMA
 
     # ---------- OCR ----------
-    OCR_PROVIDER: Literal["paddleocr", "easyocr", "cloud"] = "paddleocr"
+    # 默认 easyocr：跨平台（含 macOS arm64）开箱可用。
+    # 如需切换 paddleocr：先 `pip install -r backend/requirements-paddle.txt`，
+    # 然后在 .env 中设置 OCR_PROVIDER=paddleocr。
+    OCR_PROVIDER: Literal["paddleocr", "easyocr", "cloud"] = "easyocr"
     OCR_LANG: str = "ch"
 
     # ---------- Storage ----------

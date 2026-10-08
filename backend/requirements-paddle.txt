@@ -1,0 +1,16 @@
+## PaddleOCR 可选依赖（Linux / Windows 推荐使用）
+#
+# ⚠️ 注意：
+# 1. macOS Apple Silicon (arm64) 对 PaddlePaddle 支持有限，建议直接使用主依赖中的 easyocr
+# 2. 如要启用 PaddleOCR，Python 建议 3.9 ~ 3.11
+# 3. 启用后在前端「模型配置」 / .env 中将 OCR_PROVIDER 设为 "paddleocr"
+#
+# 安装方式：
+#   pip install -r requirements-paddle.txt
+#
+#   或 GPU 版（需 CUDA 11.x/12.x）：
+#   python -m pip install paddlepaddle-gpu==2.6.2 -i https://pypi.tuna.tsinghua.edu.cn/simple
+#   pip install paddleocr==2.8.1
+
+paddleocr==2.8.1
+paddlepaddle==2.6.2

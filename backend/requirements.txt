@@ -33,8 +33,9 @@ opencv-python==4.10.0.84
 numpy==1.26.4
 
 # ======== OCR ========
-paddleocr==2.8.1
-paddlepaddle==2.6.1
+# 默认使用 easyocr（跨平台，macOS arm64 友好）
+# 如需 paddleocr（Linux/Windows 推荐，精度更高），执行：
+#   pip install -r requirements-paddle.txt
 easyocr==1.7.1
 
 # ======== Video / Audio ========

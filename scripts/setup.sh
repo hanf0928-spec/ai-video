@@ -16,6 +16,17 @@ echo "==> 2. 安装后端依赖"
 pip install --upgrade pip
 pip install -r backend/requirements.txt
 
+echo "==> 2.1 可选：PaddleOCR（Linux / Windows 推荐）"
+OS_NAME="$(uname -s)"
+ARCH_NAME="$(uname -m)"
+if [ "$OS_NAME" = "Darwin" ] && [ "$ARCH_NAME" = "arm64" ]; then
+  echo "   检测到 macOS Apple Silicon (arm64)，PaddlePaddle 官方 wheel 支持有限，已跳过。"
+  echo "   默认使用 easyocr（已在主依赖中）。如仍想使用 paddleocr，请参考 backend/requirements-paddle.txt。"
+else
+  pip install -r backend/requirements-paddle.txt || \
+    echo "   ⚠️  PaddleOCR 安装失败，可忽略；系统将使用 easyocr。"
+fi
+
 echo "==> 3. 拉取 ComfyUI"
 mkdir -p comfyui_fork
 if [ ! -d comfyui_fork/ComfyUI ]; then
