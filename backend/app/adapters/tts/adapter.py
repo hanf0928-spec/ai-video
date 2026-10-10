@@ -102,7 +102,7 @@ class TTSAdapter:
             raise AdapterError("TTS returned empty audio")
         audio_bytes = binascii.unhexlify(audio_hex)
 
-    out = Path(output_path) if output_path else settings.OUTPUT_DIR_PATH / "tts" / f"tts_{abs(hash(text)) % 10_000_000}.{audio_format}"
+        out = Path(output_path) if output_path else settings.OUTPUT_DIR_PATH / "tts" / f"tts_{abs(hash(text)) % 10_000_000}.{audio_format}"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(audio_bytes)
         return str(out)

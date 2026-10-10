@@ -56,7 +56,7 @@ async def generate_shot(body: GenerateShotRequest, db: Session = Depends(get_db)
             shot.status = "failed"
             db.add(shot); db.commit()
             raise HTTPException(502, res.message or "generation failed")
-    dst = settings.OUTPUT_DIR_PATH / shot.episode_id / f"shot_{shot.id}.mp4"
+        dst = settings.OUTPUT_DIR_PATH / shot.episode_id / f"shot_{shot.id}.mp4"
         dst.parent.mkdir(parents=True, exist_ok=True)
         await adapter.download(res, str(dst))
         shot.video_url = str(dst)
