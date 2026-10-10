@@ -35,15 +35,19 @@ DISTRO_LIKE="${ID_LIKE:-}"
 # 选择包管理器与各平台包名
 PKG=""
 case "$DISTRO_ID" in
-  ubuntu|debian) PKG="apt" ;;
-  centos|rhel|rocky|almalinux|alinux|anolis|openEuler) PKG="yum" ;;
+  ubuntu|debian|deepin|uos) PKG="apt" ;;
+  centos|rhel|rocky|almalinux|alinux|anolis|openEuler|opencloudos|tencentos|kylin|uniontech) PKG="yum" ;;
   fedora) PKG="dnf" ;;
   *)
-    if echo "$DISTRO_LIKE" | grep -qi "debian"; then PKG="apt"
-    elif echo "$DISTRO_LIKE" | grep -qi -E "rhel|fedora|centos"; then PKG="yum"
+    if   echo "$DISTRO_LIKE" | grep -qi "debian"; then PKG="apt"
+    elif echo "$DISTRO_LIKE" | grep -qi -E "rhel|fedora|centos|opencloudos|tencentos"; then PKG="yum"
     fi
     ;;
 esac
+# OpenCloudOS 9+ 优先用 dnf（若存在）
+if [ "$PKG" = "yum" ] && command -v dnf >/dev/null 2>&1; then
+  PKG="dnf"
+fi
 if [ -z "$PKG" ]; then
   err "不支持的发行版: $DISTRO_ID（ID_LIKE=$DISTRO_LIKE）"
   err "请手动安装: nginx redis ffmpeg python3 python3-pip nodejs rsync curl"
@@ -74,13 +78,33 @@ case "$PKG" in
     REDIS_SERVICE="redis-server"
     ;;
   yum|dnf)
-    $PKG install -y epel-release || true
-    $PKG install -y nginx redis ffmpeg python3 python3-pip gcc gcc-c++ make \
-                    git curl ca-certificates rsync openssl || \
+    # EPEL（OpenCloudOS / TencentOS / CentOS 系）
+    $PKG install -y epel-release 2>/dev/null || \
+    $PKG install -y oraclelinux-release-el9 2>/dev/null || true
+
+    # 基础依赖
     $PKG install -y nginx redis python3 python3-pip gcc gcc-c++ make \
-                    git curl ca-certificates rsync openssl   # ffmpeg 可能不在源内
-    if ! command -v ffmpeg >/dev/null; then
-      warn "ffmpeg 未在源中，可参考 https://rpmfusion.org 或静态二进制自行安装"
+                    git curl ca-certificates rsync openssl tar xz which
+
+    # ffmpeg：优先用源，失败则回退静态二进制
+    if ! $PKG install -y ffmpeg 2>/dev/null; then
+      warn "源中无 ffmpeg，尝试安装静态二进制到 /usr/local/bin"
+      TMP_FF=$(mktemp -d)
+      ARCH=$(uname -m)
+      case "$ARCH" in
+        x86_64) FF_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" ;;
+        aarch64) FF_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz" ;;
+        *) FF_URL="" ;;
+      esac
+      if [ -n "$FF_URL" ] && curl -fsSL "$FF_URL" -o "$TMP_FF/ff.tar.xz"; then
+        tar -xJf "$TMP_FF/ff.tar.xz" -C "$TMP_FF"
+        FF_BIN=$(find "$TMP_FF" -maxdepth 2 -type f -name ffmpeg | head -n1)
+        FP_BIN=$(find "$TMP_FF" -maxdepth 2 -type f -name ffprobe | head -n1)
+        [ -n "$FF_BIN" ] && install -m 0755 "$FF_BIN" /usr/local/bin/ffmpeg
+        [ -n "$FP_BIN" ] && install -m 0755 "$FP_BIN" /usr/local/bin/ffprobe
+      fi
+      rm -rf "$TMP_FF"
+      command -v ffmpeg >/dev/null || warn "ffmpeg 安装失败，视频合成功能将不可用，请稍后手工处理"
     fi
     REDIS_SERVICE="redis"
     ;;
@@ -116,6 +140,14 @@ fi
 # ---------- 3. Python venv + 依赖 ----------
 info "==> 3. Python venv + 依赖"
 cd "$APP_DIR"
+# venv 自检：Debian 系需要显式装 python3-venv，RHEL 系自带
+if ! python3 -c "import venv" 2>/dev/null; then
+  warn "python3 venv 模块缺失，尝试安装"
+  case "$PKG" in
+    apt)      apt-get install -y python3-venv ;;
+    yum|dnf)  $PKG install -y python3-virtualenv || true ;;
+  esac
+fi
 [ -d .venv ] || python3 -m venv .venv
 # shellcheck disable=SC1091
 source .venv/bin/activate
