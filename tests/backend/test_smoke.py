@@ -29,7 +29,8 @@ def test_workflow_loader():
 
 
 def test_pipeline_import():
-    from backend.app.pipelines import Manga2AnimePipeline, render_episode
+    from backend.app.pipelines.manga2anime import Manga2AnimePipeline
+    from backend.app.pipelines.episode_render import render_episode
     assert Manga2AnimePipeline is not None
     assert render_episode is not None
 

@@ -40,7 +40,7 @@ def _update_job(job_id: str, **kwargs) -> None:
 @celery_app.task(bind=True, name="task.manga2anime")
 def task_manga2anime(self, job_id: str, upload_id: str, project_id: str, params: dict):
     """Full manga -> anime job."""
-    from .pipelines import Manga2AnimePipeline
+    from .pipelines.manga2anime import Manga2AnimePipeline
 
     _update_job(job_id, status="running", stage="start", progress=0.0)
 
@@ -78,7 +78,7 @@ def task_manga2anime(self, job_id: str, upload_id: str, project_id: str, params:
 
 @celery_app.task(bind=True, name="task.render_episode")
 def task_render_episode(self, job_id: str, episode_id: str, params: dict):
-    from .pipelines import render_episode
+    from .pipelines.episode_render import render_episode
 
     _update_job(job_id, status="running", stage="start", progress=0.0)
 

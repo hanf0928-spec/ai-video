@@ -6,10 +6,11 @@ Wants=redis-server.service
 
 [Service]
 Type=simple
-User=www-data
-Group=www-data
+# User=www-data
+# Group=www-data
 WorkingDirectory=/opt/ai-manga
 Environment="PYTHONPATH=/opt/ai-manga"
+Environment="PYTHONUNBUFFERED=1"
 EnvironmentFile=-/opt/ai-manga/.env
 ExecStart=/opt/ai-manga/.venv/bin/celery -A backend.app.celery_app.celery_app worker \
     -l info --concurrency=2

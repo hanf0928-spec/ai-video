@@ -1,20 +1,26 @@
 
 [Unit]
 Description=AI 漫剧工作流 - 后端 FastAPI
-After=network.target redis-server.service
-Wants=redis-server.service
+After=network.target redis.service redis-server.service
+Wants=redis.service redis-server.service
 
 [Service]
 Type=simple
-User=www-data
-Group=www-data
+# 用户默认 root（OpenCloudOS 等最小镜像可能没有 www-data；可按需改）
+# User=www-data
+# Group=www-data
 WorkingDirectory=/opt/ai-manga
 Environment="PYTHONPATH=/opt/ai-manga"
+Environment="PYTHONUNBUFFERED=1"
 EnvironmentFile=-/opt/ai-manga/.env
+# 单进程启动，避免 uvicorn multi-worker 在容器 / 定制内核上卡死；
+# 需要并发可以在 Nginx 后面挂多个端口或改用 gunicorn+uvicorn.workers.UvicornWorker
 ExecStart=/opt/ai-manga/.venv/bin/uvicorn backend.app.main:app \
-    --host 127.0.0.1 --port 8000 --workers 2
+    --host 127.0.0.1 --port 8000 --workers 1 --log-level info
 Restart=on-failure
 RestartSec=5
+# 启动 60s 内必须 bind 端口成功，否则 systemd 杀掉重启
+TimeoutStartSec=60
 StandardOutput=append:/var/log/ai-manga/backend.log
 StandardError=append:/var/log/ai-manga/backend.log
 
