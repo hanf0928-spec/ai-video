@@ -44,7 +44,7 @@ async def generate_shot(body: GenerateShotRequest, db: Session = Depends(get_db)
     adapter = get_video_adapter(body.backend)
     req = VideoGenRequest(
         prompt=shot.prompt or "anime scene",
-        image_path=shot.image_url,
+        image_url=shot.image_url,
         duration=shot.duration or 4.0,
         **body.extra,
     )

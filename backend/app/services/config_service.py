@@ -30,12 +30,14 @@ from ..utils.crypto import decrypt, encrypt, mask
 # field: (type, is_secret, default, description)
 PROVIDER_SCHEMA: dict[str, dict[str, dict]] = {
     "hailuo": {
-        "api_key":   {"type": "string", "secret": True,  "default": "", "desc": "海螺03 API Key"},
-        "group_id":  {"type": "string", "secret": True,  "default": "", "desc": "MiniMax Group ID"},
-        "base_url":  {"type": "string", "secret": False, "default": "https://api.minimax.chat/v1", "desc": "API 地址"},
-        "model":     {"type": "string", "secret": False, "default": "MiniMax-Hailuo-03", "desc": "模型名"},
-        "default_duration":   {"type": "int", "secret": False, "default": 6},
-        "default_resolution": {"type": "string", "secret": False, "default": "1080P"},
+        # EdgeOne Makers Model Pro 网关 + Minimax H3 (V1.2)
+        "api_key":  {"type": "string", "secret": True,  "default": "", "desc": "EdgeOne 网关 API Key"},
+        "base_url": {"type": "string", "secret": False, "default": "", "desc": "EdgeOne 网关域名（$AI_GATEWAY_BASE_URL，不带尾部 /）"},
+        "model":    {"type": "string", "secret": False, "default": "MiniMax-H3", "desc": "模型标识（仅记录，实际由网关路由）"},
+        "default_duration":    {"type": "int",    "secret": False, "default": 5,     "desc": "默认时长秒（4~15）"},
+        "default_resolution":  {"type": "string", "secret": False, "default": "768P", "desc": "分辨率：480P / 720P / 768P"},
+        "default_ratio":       {"type": "string", "secret": False, "default": "16:9", "desc": "T2VA 比例：21:9 / 16:9 / 4:3 / 1:1 / 3:4 / 9:16 / adaptive"},
+        "default_remove_audio":{"type": "string", "secret": False, "default": "false", "desc": "是否剥离原生音轨（true/false）"},
     },
     "seedance": {
         "api_key":    {"type": "string", "secret": True,  "default": "", "desc": "火山引擎 API Key"},
@@ -214,16 +216,18 @@ async def test_connection(provider: str) -> tuple[bool, str]:
 
     try:
         if provider == "hailuo":
-            cfg = ensure_configured("hailuo", "api_key")
+            cfg = ensure_configured("hailuo", "api_key", "base_url")
             async with httpx.AsyncClient(timeout=10.0) as c:
+                # 用一个不存在的 task_id 探测网关与鉴权
                 r = await c.get(
-                    f"{cfg['base_url'].rstrip('/')}/query/video_generation",
+                    f"{cfg['base_url'].rstrip('/')}/minimax/query/__probe__",
                     headers={"Authorization": f"Bearer {cfg['api_key']}"},
-                    params={"task_id": "test"},
                 )
-                # 任何非 401/403 即视为凭证可用（哪怕 task 不存在）
+                # 401/403 表示密钥无效；其他（包括 404/400）视为网关联通 + 鉴权通过
                 ok = r.status_code not in (401, 403)
                 msg = f"HTTP {r.status_code}"
+                if ok and r.status_code >= 400:
+                    msg += " (凭证已验证，探测 task 不存在属正常)"
         elif provider == "seedance":
             cfg = ensure_configured("seedance", "api_key")
             async with httpx.AsyncClient(timeout=10.0) as c:

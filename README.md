@@ -127,7 +127,7 @@ bash scripts/start.sh
 
 | 提供商 | 必填字段 |
 |--------|---------|
-| 🎥 海螺 03 (MiniMax) | api_key, group_id |
+| 🎥 海螺 03 (MiniMax H3) | api_key, base_url（EdgeOne 网关域名） |
 | 🎬 Seedance 2 (字节) | api_key, endpoint_id |
 | 🧠 LLM (OpenAI 兼容) | api_key, base_url, model |
 | 🔊 TTS (MiniMax) | api_key |
