@@ -139,10 +139,22 @@ bash scripts/start.sh
 
 ## 📖 文档
 
+- [🌐 公网部署指南 (云服务器)](./deploy/README.md)
 - [架构设计](./docs/architecture.md)
 - [漫画转漫剧流水线详解](./docs/manga2anime-pipeline.md)
 - [模型适配器开发指南](./docs/adapter-dev.md)
 - [ComfyUI 自定义节点](./docs/comfyui-nodes.md)
+
+## 🚢 公网部署速览
+
+云服务器一键部署（Ubuntu/Debian）：
+```bash
+ssh root@<公网IP>
+git clone https://github.com/hanf0928-spec/ai-video.git /opt/ai-manga
+cd /opt/ai-manga
+sudo bash scripts/deploy.sh
+```
+完整说明见 [deploy/README.md](./deploy/README.md)。
 
 ## 📝 License
 

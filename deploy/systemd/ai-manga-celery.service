@@ -1,0 +1,22 @@
+
+[Unit]
+Description=AI 漫剧工作流 - Celery Worker
+After=network.target redis-server.service ai-manga-backend.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/ai-manga
+Environment="PYTHONPATH=/opt/ai-manga"
+EnvironmentFile=-/opt/ai-manga/.env
+ExecStart=/opt/ai-manga/.venv/bin/celery -A backend.app.celery_app.celery_app worker \
+    -l info --concurrency=2
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/ai-manga/celery.log
+StandardError=append:/var/log/ai-manga/celery.log
+
+[Install]
+WantedBy=multi-user.target

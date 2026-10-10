@@ -24,10 +24,14 @@ def create_app() -> FastAPI:
     )
 
     # CORS
+    # 支持 CORS_ORIGINS=* 放通一切来源（公网部署常见需求）
+    _cors = settings.CORS_ORIGINS
+    _allow_origins = ["*"] if any(o.strip() == "*" for o in _cors) else _cors
+    _allow_credentials = False if _allow_origins == ["*"] else True
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS,
-        allow_credentials=True,
+        allow_origins=_allow_origins,
+        allow_credentials=_allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )

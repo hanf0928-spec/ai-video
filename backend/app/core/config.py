@@ -65,8 +65,16 @@ class Settings(BaseSettings):
     ENABLE_OCR: bool = True
 
     # ---------- CORS ----------
+    # 公网部署场景：建议直接放通（反代由 Nginx 做）
+    # 多个来源用英文逗号分隔，例如：
+    #   CORS_ORIGINS=https://your-domain.com,http://1.2.3.4
+    # 使用 "*" 表示不限制来源（配合 allow_credentials=False 更安全，当前为 True 需谨慎）
     CORS_ORIGINS: List[str] = Field(
-        default_factory=lambda: ["http://localhost:5173", "http://localhost:3000"]
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://localhost:3000",
+            "http://127.0.0.1:5173",
+        ]
     )
 
     @field_validator("CORS_ORIGINS", mode="before")

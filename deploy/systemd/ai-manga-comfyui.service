@@ -1,0 +1,19 @@
+
+[Unit]
+Description=AI 漫剧工作流 - ComfyUI
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/ai-manga/comfyui_fork
+# ComfyUI 只监听 127.0.0.1，不暴露公网（由后端代理调用）
+ExecStart=/opt/ai-manga/.venv/bin/python main.py --listen 127.0.0.1 --port 8188
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/ai-manga/comfyui.log
+StandardError=append:/var/log/ai-manga/comfyui.log
+
+[Install]
+WantedBy=multi-user.target
