@@ -42,7 +42,7 @@ async def render_episode(
     if not shots:
         raise PipelineError("episode has no shots")
 
-    workdir = settings.OUTPUT_DIR / ep.project_id / f"ep_{ep.id}"
+    workdir = settings.OUTPUT_DIR_PATH / ep.project_id / f"ep_{ep.id}"
     workdir.mkdir(parents=True, exist_ok=True)
 
     # Shots -> videos

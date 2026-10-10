@@ -60,7 +60,7 @@ class Manga2AnimePipeline:
         self.on_progress = on_progress or (lambda s, p, m: None)
 
         self.run_id = uuid.uuid4().hex[:12]
-        self.workdir = settings.OUTPUT_DIR / project_id / f"m2a_{self.run_id}"
+        self.workdir = settings.OUTPUT_DIR_PATH / project_id / f"m2a_{self.run_id}"
         self.workdir.mkdir(parents=True, exist_ok=True)
 
     def _p(self, stage: str, progress: float, msg: str = "") -> None:

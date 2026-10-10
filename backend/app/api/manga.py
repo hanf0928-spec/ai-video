@@ -34,7 +34,7 @@ def upload_manga(
     if ext not in ALLOWED_EXT:
         raise HTTPException(400, f"unsupported file type: {ext}")
 
-    upload_dir = settings.UPLOAD_DIR / project_id
+    upload_dir = settings.UPLOAD_DIR_PATH / project_id
     upload_dir.mkdir(parents=True, exist_ok=True)
     dst = upload_dir / (file.filename or f"upload{ext}")
     with dst.open("wb") as f:

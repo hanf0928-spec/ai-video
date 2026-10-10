@@ -52,11 +52,32 @@ class Settings(BaseSettings):
     OCR_LANG: str = "ch"
 
     # ---------- Storage ----------
-    UPLOAD_DIR: Path = ROOT_DIR / "data" / "uploads"
-    OUTPUT_DIR: Path = ROOT_DIR / "data" / "outputs"
-    PROJECT_DIR: Path = ROOT_DIR / "data" / "projects"
-    CACHE_DIR: Path = ROOT_DIR / "data" / "cache"
+    # ⚠️ 必须用 str 类型存储路径，不能用 Path。
+    #    因为 pydantic-settings 会把 Path 视为"复杂类型"，
+    #    对 .env 中的值先尝试 json.loads()，导致普通路径字符串直接报错：
+    #    JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+    #    通过 UPLOAD_DIR_PATH / OUTPUT_DIR_PATH 等属性方法返回 Path 对象。
+    UPLOAD_DIR: str = str(ROOT_DIR / "data" / "uploads")
+    OUTPUT_DIR: str = str(ROOT_DIR / "data" / "outputs")
+    PROJECT_DIR: str = str(ROOT_DIR / "data" / "projects")
+    CACHE_DIR: str = str(ROOT_DIR / "data" / "cache")
     MAX_UPLOAD_SIZE_MB: int = 500
+
+    @property
+    def UPLOAD_DIR_PATH(self) -> Path:
+        return Path(self.UPLOAD_DIR)
+
+    @property
+    def OUTPUT_DIR_PATH(self) -> Path:
+        return Path(self.OUTPUT_DIR)
+
+    @property
+    def PROJECT_DIR_PATH(self) -> Path:
+        return Path(self.PROJECT_DIR)
+
+    @property
+    def CACHE_DIR_PATH(self) -> Path:
+        return Path(self.CACHE_DIR)
 
     # ---------- Feature Flags ----------
     ENABLE_LOCAL_COMFYUI: bool = True
@@ -88,7 +109,7 @@ class Settings(BaseSettings):
         return ROOT_DIR
 
     def ensure_dirs(self) -> None:
-        for d in (self.UPLOAD_DIR, self.OUTPUT_DIR, self.PROJECT_DIR, self.CACHE_DIR):
+        for d in (self.UPLOAD_DIR_PATH, self.OUTPUT_DIR_PATH, self.PROJECT_DIR_PATH, self.CACHE_DIR_PATH):
             d.mkdir(parents=True, exist_ok=True)
 
 
