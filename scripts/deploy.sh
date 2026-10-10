@@ -155,10 +155,8 @@ pip install --upgrade pip
 pip install -r backend/requirements.txt
 
 # ---------- 4. 前端构建 ----------
-info "==> 4. 前端构建"
-cd "$APP_DIR/frontend"
-npm ci || npm install
-npm run build
+info "==> 4. 前端构建（自动根据内存选择构建命令）"
+bash "$APP_DIR/scripts/build_frontend.sh"
 cd "$APP_DIR"
 
 # ---------- 5. 环境变量 ----------

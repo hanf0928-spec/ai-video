@@ -26,4 +26,23 @@ export default defineConfig({
     port: 4173,
     allowedHosts: 'all' as any,
   },
+  build: {
+    // 用 esbuild 压缩（比默认的 terser 快 10~20 倍、省内存）
+    minify: 'esbuild',
+    // 低配机不生成 sourcemap，省大量内存
+    sourcemap: false,
+    // 把巨型库拆分，降低单次转译内存峰值
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor':   ['react', 'react-dom', 'react-router-dom'],
+          'antd-vendor':    ['antd', 'dayjs'],
+          'icons-vendor':   ['@ant-design/icons'],
+          'misc-vendor':    ['axios', 'zustand'],
+        },
+      },
+    },
+    // 单文件 > 1.5MB 才告警（Antd 本来就大）
+    chunkSizeWarningLimit: 1500,
+  },
 })

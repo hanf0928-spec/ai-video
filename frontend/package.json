@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "vite --port 5173",
     "build": "tsc -b && vite build",
+    "build:fast": "vite build",
+    "build:low-mem": "NODE_OPTIONS=\"--max-old-space-size=1024\" vite build",
     "preview": "vite preview --port 5173",
     "lint": "eslint src --ext ts,tsx"
   },

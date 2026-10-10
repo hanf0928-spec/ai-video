@@ -133,6 +133,28 @@ sudo bash scripts/build_frontend.sh
 - 前端未构建：`sudo bash scripts/build_frontend.sh`
 - Nginx `root` 路径不对：确认 `/opt/ai-manga/frontend/dist/index.html` 存在
 
+### 2.5 前端构建卡死 / `transforming (XXXX)` 不动
+典型原因：服务器内存 ≤ 2G，Vite 构建吃光内存被 OOM 挂起。**三选一**解决：
+
+**方案 A（推荐）：本地打包后 rsync 上传**，不占服务器资源
+```bash
+# 在本地（Mac/PC）执行即可
+bash scripts/push_dist.sh root@你的公网IP
+```
+
+**方案 B：服务器加 swap，重跑 build**（`build_frontend.sh` 已内置自动加 swap）
+```bash
+sudo bash scripts/build_frontend.sh
+```
+
+**方案 C：手工加 swap + 低内存命令**
+```bash
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+cd /opt/ai-manga/frontend
+NODE_OPTIONS="--max-old-space-size=1024" npx vite build
+```
+
 ### 3. 页面能打开但接口 502 / 504
 - 后端未起：`systemctl status ai-manga-backend` + `journalctl -u ai-manga-backend -n 100`
 - `.env` 中 `APP_SECRET_KEY` 为空也会启动失败
