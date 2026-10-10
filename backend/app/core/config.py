@@ -10,7 +10,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List, Literal
 
-from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -69,20 +68,20 @@ class Settings(BaseSettings):
     # 多个来源用英文逗号分隔，例如：
     #   CORS_ORIGINS=https://your-domain.com,http://1.2.3.4
     # 使用 "*" 表示不限制来源（配合 allow_credentials=False 更安全，当前为 True 需谨慎）
-    CORS_ORIGINS: List[str] = Field(
-        default_factory=lambda: [
-            "http://localhost:5173",
-            "http://localhost:3000",
-            "http://127.0.0.1:5173",
-        ]
-    )
+    # ⚠️ 必须用 str 类型 + 属性拆分，不能用 List[str]。
+    #    因为 pydantic-settings 对 List[str] 会强制尝试 json.loads()，
+    #    使得 `CORS_ORIGINS=*` / `CORS_ORIGINS=a,b` 这种人类友好写法直接报错。
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
 
-    @field_validator("CORS_ORIGINS", mode="before")
-    @classmethod
-    def _split_cors(cls, v):
-        if isinstance(v, str):
-            return [i.strip() for i in v.split(",") if i.strip()]
-        return v
+    @property
+    def CORS_ORIGINS_LIST(self) -> List[str]:
+        """把逗号分隔的字符串拆成列表，支持 '*' 直通。"""
+        raw = (self.CORS_ORIGINS or "").strip()
+        if not raw:
+            return []
+        if raw == "*":
+            return ["*"]
+        return [i.strip() for i in raw.split(",") if i.strip()]
 
     @property
     def ROOT(self) -> Path:
