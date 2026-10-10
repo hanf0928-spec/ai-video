@@ -8,9 +8,23 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Literal
+from typing import Any, List, Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _strip_inline_comment(v: Any) -> Any:
+    """剥离 .env 字符串里误写的行内注释与首尾空格。
+
+    pydantic-settings 直接把 `foo=bar   # comment` 整行作为值，容易引起
+    Literal/int/bool 校验失败。这里仅对 str 做兼容处理。
+    """
+    if isinstance(v, str):
+        if "#" in v:
+            v = v.split("#", 1)[0]
+        return v.strip()
+    return v
 
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -50,6 +64,12 @@ class Settings(BaseSettings):
     # 然后在 .env 中设置 OCR_PROVIDER=paddleocr。
     OCR_PROVIDER: Literal["paddleocr", "easyocr", "cloud"] = "easyocr"
     OCR_LANG: str = "ch"
+
+    # 兼容用户在 .env 中习惯写行内注释（例如 `OCR_PROVIDER=easyocr  # xxx`）
+    @field_validator("OCR_PROVIDER", "OCR_LANG", "APP_ENV", "LOG_LEVEL", mode="before")
+    @classmethod
+    def _clean_simple_str(cls, v: Any) -> Any:
+        return _strip_inline_comment(v)
 
     # ---------- Storage ----------
     # ⚠️ 必须用 str 类型存储路径，不能用 Path。
