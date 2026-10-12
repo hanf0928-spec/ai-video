@@ -65,6 +65,44 @@ def _run(cmd: list[str]) -> None:
         raise AppError(f"ffmpeg failed: {r.stderr[-500:]}")
 
 
+def _run_with_codec_fallback(build_cmd, label: str) -> None:
+    """Run an ffmpeg command built by build_cmd(codec); on encoder-related error,
+    retry with the next available codec. Last fallback is always 'mpeg4'.
+    """
+    tried: list[str] = []
+    available = _available_encoders()
+    # 按优先级构造实际可试序列：当前优选 + 所有其他候选 + mpeg4
+    seq: list[str] = []
+    primary = _pick_video_codec()
+    seq.append(primary)
+    for c in _H264_CANDIDATES:
+        if c not in seq and c in available:
+            seq.append(c)
+    if _FALLBACK_CODEC not in seq:
+        seq.append(_FALLBACK_CODEC)
+
+    last_err: Exception | None = None
+    for codec in seq:
+        cmd = build_cmd(codec)
+        logger.debug(f"ffmpeg[{label}] codec={codec}: {' '.join(cmd)}")
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode == 0:
+            if codec != primary:
+                logger.warning(f"ffmpeg[{label}] codec {primary} 失败，已成功降级到 {codec}")
+            return
+        err = r.stderr[-500:]
+        tried.append(f"{codec}: {err[-200:]}")
+        # 判断是否是编码器相关问题，其他问题不用换编码器
+        if not any(k in err.lower() for k in (
+            "encoder", "could not open", "not found", "unknown encoder",
+            "invalid argument", "-22"
+        )):
+            raise AppError(f"ffmpeg[{label}] failed: {err}")
+        last_err = AppError(f"ffmpeg[{label}] codec {codec} failed: {err}")
+        logger.warning(f"ffmpeg[{label}] codec {codec} 失败，尝试下一个编码器")
+    raise AppError(f"ffmpeg[{label}] 所有编码器都失败：\n" + "\n".join(tried))
+
+
 def probe_duration(path: str | Path) -> float:
     r = subprocess.run(
         [
@@ -133,22 +171,26 @@ def concat_videos(videos: list[str], output: str) -> str:
     for i in range(n):
         filter_parts.append(f"[{i}:v:0][{i}:a:0?]")
     filt = "".join(filter_parts) + f"concat=n={n}:v=1:a=1[outv][outa]"
-    vcodec = _pick_video_codec()
-    cmd = [
-        "ffmpeg", "-y", *inputs,
-        "-filter_complex", filt,
-        "-map", "[outv]", "-map", "[outa]",
-        "-c:v", vcodec, "-preset", "medium", "-crf", "20",
-        "-c:a", "aac", "-b:a", "192k",
-        str(output),
-    ]
-    # mpeg4 不接受 -preset/-crf，去掉这些参数避免报错
-    if vcodec == "mpeg4":
-        cmd = [a for a in cmd if a not in ("-preset", "medium", "-crf", "20")]
-        # mpeg4 用 -q:v 控制质量
-        idx = cmd.index("-c:v")
-        cmd[idx + 2 : idx + 2] = ["-q:v", "3"]
-    _run(cmd)
+
+    def _build(codec: str) -> list[str]:
+        cmd = [
+            "ffmpeg", "-y", *inputs,
+            "-filter_complex", filt,
+            "-map", "[outv]", "-map", "[outa]",
+            "-c:v", codec,
+            "-c:a", "aac", "-b:a", "192k",
+            str(output),
+        ]
+        if codec == "mpeg4":
+            # mpeg4 不支持 preset/crf，用 q:v
+            idx = cmd.index("-c:v")
+            cmd[idx + 2 : idx + 2] = ["-q:v", "3"]
+        else:
+            idx = cmd.index("-c:v")
+            cmd[idx + 2 : idx + 2] = ["-preset", "medium", "-crf", "20"]
+        return cmd
+
+    _run_with_codec_fallback(_build, "concat_videos")
     return str(output)
 
 
@@ -166,14 +208,15 @@ def burn_subtitle(video: str, srt_path: str, output: str) -> str:
 
 def image_to_video(image: str, duration: float, output: str, *, fps: int = 24) -> str:
     """Create a still-image video (for fallback when I2V fails)."""
-    vcodec = _pick_video_codec()
-    cmd = [
-        "ffmpeg", "-y",
-        "-loop", "1", "-i", str(image),
-        "-t", str(duration), "-r", str(fps),
-        "-c:v", vcodec, "-pix_fmt", "yuv420p",
-        "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
-        str(output),
-    ]
-    _run(cmd)
+    def _build(codec: str) -> list[str]:
+        return [
+            "ffmpeg", "-y",
+            "-loop", "1", "-i", str(image),
+            "-t", str(duration), "-r", str(fps),
+            "-c:v", codec, "-pix_fmt", "yuv420p",
+            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+            str(output),
+        ]
+
+    _run_with_codec_fallback(_build, "image_to_video")
     return str(output)
