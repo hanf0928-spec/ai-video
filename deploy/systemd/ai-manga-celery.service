@@ -8,11 +8,11 @@ Wants=redis-server.service
 Type=simple
 # User=www-data
 # Group=www-data
-WorkingDirectory=/opt/ai-manga
-Environment="PYTHONPATH=/opt/ai-manga"
+WorkingDirectory=/root/ai-video
+Environment="PYTHONPATH=/root/ai-video"
 Environment="PYTHONUNBUFFERED=1"
-EnvironmentFile=-/opt/ai-manga/.env
-ExecStart=/opt/ai-manga/.venv/bin/celery -A backend.app.celery_app.celery_app worker \
+EnvironmentFile=-/root/ai-video/.env
+ExecStart=/root/ai-video/.venv/bin/celery -A backend.app.celery_app.celery_app worker \
     -l info --concurrency=2
 Restart=on-failure
 RestartSec=5
