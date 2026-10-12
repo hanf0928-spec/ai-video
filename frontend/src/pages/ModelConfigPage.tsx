@@ -54,8 +54,8 @@ export default function ModelConfigPage() {
         <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
       </Space>
       <Alert
-        type="info" showIcon
-        message="所有模型 API Key / Endpoint 在此处集中配置。敏感字段加密保存在数据库中，重启后仍然有效。"
+        type="warning" showIcon
+        message="所有模型 API Key / Endpoint 在此处集中配置。为方便查看，当前 Key 以明文展示；敏感字段在数据库中仍为加密存储。请仅在受信网络 / 本机使用。"
         style={{ marginBottom: 16 }}
       />
 
@@ -78,16 +78,12 @@ function ProviderCard({ data, onSaved }: { data: ProviderPublic; onSaved: () => 
   const [saving, setSaving] = useState(false)
   const info = PROVIDER_LABEL[data.provider] || { icon: '⚙️', name: data.provider, desc: '' }
 
-  // 初始值：secret 字段留空（避免显示密文），其他字段显示现值
+  // 方案 B：后端直接返回明文，secret 字段和普通字段一视同仁
   useEffect(() => {
     const initial: Record<string, any> = {}
     for (const [field, meta] of Object.entries(data.schema)) {
       const current = data.config[field]
-      if (meta.secret) {
-        initial[field] = '' // 显示空，占位符会提示 masked
-      } else {
-        initial[field] = current ?? meta.default
-      }
+      initial[field] = current ?? meta.default
     }
     form.setFieldsValue(initial)
     setEnabled(data.enabled)
@@ -97,7 +93,8 @@ function ProviderCard({ data, onSaved }: { data: ProviderPublic; onSaved: () => 
     try {
       const values = await form.validateFields()
       setSaving(true)
-      // 删除空的 secret 字段（表示"保持原值"）
+      // 方案 B：secret 字段已全量显示明文，直接全部提交即可。
+      // 仅对空字符串的 secret 做 "保持原值" 处理（对应用户主动清空的场景）
       const payload: Record<string, any> = {}
       for (const [field, meta] of Object.entries(data.schema)) {
         const v = values[field]
@@ -131,10 +128,6 @@ function ProviderCard({ data, onSaved }: { data: ProviderPublic; onSaved: () => 
   }
 
   const renderField = (field: string, meta: FieldMeta) => {
-    const current = data.config[field]
-    const hasValue = meta.secret ? !!(current && typeof current === 'object' && current.has_value) : current != null
-    const masked = meta.secret && hasValue ? current.masked : ''
-
     const label = (
       <Space>
         <span>{field}</span>
@@ -151,18 +144,20 @@ function ProviderCard({ data, onSaved }: { data: ProviderPublic; onSaved: () => 
       )
     }
 
+    // 方案 B：secret 字段也直接显示明文，支持点眼睛图标切换可见性
     if (meta.secret) {
       return (
         <Form.Item
           key={field}
           label={label}
           name={field}
-          extra={hasValue ? <Text type="secondary">当前值：{masked}（留空则保持不变）</Text> : null}
+          extra={<Text type="warning" style={{ fontSize: 12 }}>❗ 当前显示为明文，请在受信环境中使用</Text>}
         >
           <Input.Password
-            placeholder={hasValue ? '保持原值' : '请填写'}
+            placeholder="请填写"
+            visibilityToggle={{ visible: true }}
             iconRender={(v) => (v ? <EyeTwoTone /> : <EyeInvisibleOutlined />)}
-            autoComplete="new-password"
+            autoComplete="off"
           />
         </Form.Item>
       )

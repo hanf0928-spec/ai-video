@@ -129,17 +129,19 @@ def get_config(provider: str) -> dict:
 
 
 def get_config_public(provider: str) -> dict:
-    """Return a UI-safe view: secrets are masked, never returned in clear."""
+    """Return a view used by the UI.
+
+    ⚠️ 当前策略（方案 B）：**secret 字段直接返回明文**。
+       仅适合单人/受信网络部署。多人共享环境请改回 mask。
+    """
     cfg = get_config(provider)
     with SessionLocal() as db:
         row = _get_row(db, provider)
     out: dict[str, Any] = {}
     for field, meta in PROVIDER_SCHEMA[provider].items():
         v = cfg.get(field, meta.get("default", ""))
-        if meta.get("secret") and isinstance(v, str) and v:
-            out[field] = {"masked": mask(v), "has_value": True}
-        else:
-            out[field] = v
+        # 不再脱敏 —— 直接把解密后的明文给前端
+        out[field] = v
     return {
         "provider": provider,
         "enabled": bool(row.enabled) if row else True,
