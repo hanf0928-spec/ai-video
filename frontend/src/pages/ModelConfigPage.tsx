@@ -29,6 +29,7 @@ const PROVIDER_LABEL: Record<string, { icon: string; name: string; desc: string 
   llm:      { icon: '🧠', name: 'LLM (OpenAI 兼容)', desc: '分镜脚本生成' },
   tts:      { icon: '🔊', name: 'TTS (MiniMax)',    desc: '角色配音合成' },
   comfyui:  { icon: '🎨', name: 'ComfyUI',          desc: '本地推理引擎（无需 Key）' },
+  vlm_ocr:  { icon: '👁️',  name: 'VLM OCR (OpenRouter)', desc: '云端视觉大模型 OCR（零本地内存，推荐小内存服务器）' },
 }
 
 export default function ModelConfigPage() {

@@ -60,9 +60,12 @@ class Settings(BaseSettings):
 
     # ---------- OCR ----------
     # 默认 easyocr：跨平台（含 macOS arm64）开箱可用。
-    # 如需切换 paddleocr：先 `pip install -r backend/requirements-paddle.txt`，
-    # 然后在 .env 中设置 OCR_PROVIDER=paddleocr。
-    OCR_PROVIDER: Literal["paddleocr", "easyocr", "cloud"] = "easyocr"
+    # 可选项：
+    #   - "easyocr"   : 本地 CPU 推理，需要 ~1.5GB RAM
+    #   - "paddleocr" : 本地 Linux 优先，精度更高（需装 requirements-paddle.txt）
+    #   - "vlm"       : 云端 VLM OCR（OpenRouter 兼容），零本地 RAM，推荐小内存服务器
+    #                   需在"模型配置"页填写 vlm_ocr 的 api_key / base_url / model
+    OCR_PROVIDER: Literal["paddleocr", "easyocr", "cloud", "vlm"] = "easyocr"
     OCR_LANG: str = "ch"
 
     # 兼容用户在 .env 中习惯写行内注释（例如 `OCR_PROVIDER=easyocr  # xxx`）

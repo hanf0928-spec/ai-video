@@ -65,6 +65,17 @@ PROVIDER_SCHEMA: dict[str, dict[str, dict]] = {
         "api_url": {"type": "string", "secret": False, "default": "http://127.0.0.1:8188"},
         "ws_url":  {"type": "string", "secret": False, "default": "ws://127.0.0.1:8188/ws"},
     },
+    "vlm_ocr": {
+        # OCR via Vision-Language Model (OpenAI/OpenRouter 兼容协议)
+        # 典型配置：OpenRouter 免费 VLM（google/gemma-3-27b-it:free 等）
+        "api_key":   {"type": "string", "secret": True,  "default": "", "desc": "OpenRouter / 其他 VLM 服务商 API Key"},
+        "base_url":  {"type": "string", "secret": False, "default": "https://openrouter.ai/api/v1", "desc": "OpenAI 兼容 base_url（不含尾部 /chat/completions）"},
+        "model":     {"type": "string", "secret": False, "default": "google/gemma-3-27b-it:free", "desc": "VLM 模型 ID；OpenRouter 示例：google/gemma-3-27b-it:free / qwen/qwen2-vl-72b-instruct:free"},
+        "prompt":    {"type": "string", "secret": False, "default": "You are an OCR engine for manga/comic panels. Extract ALL readable Chinese or Japanese or English text from the image. Output ONLY the raw text content, one line per speech bubble or caption, no explanations, no translations, no numbering. If no text is present, output an empty string.", "desc": "系统提示词，决定 OCR 行为"},
+        "max_tokens":{"type": "int",    "secret": False, "default": 1024, "desc": "每次调用最大 token"},
+        "timeout":   {"type": "int",    "secret": False, "default": 60,   "desc": "单次请求超时（秒）"},
+        "concurrency":{"type": "int",   "secret": False, "default": 2,    "desc": "并发度（免费模型建议 1~2，防限流）"},
+    },
 }
 
 
@@ -260,6 +271,34 @@ async def test_connection(provider: str) -> tuple[bool, str]:
                 r = await c.get(f"{cfg['api_url'].rstrip('/')}/system_stats")
                 ok = r.status_code == 200
                 msg = "ComfyUI online" if ok else f"HTTP {r.status_code}"
+        elif provider == "vlm_ocr":
+            cfg = ensure_configured("vlm_ocr", "api_key", "base_url", "model")
+            async with httpx.AsyncClient(timeout=20.0) as c:
+                # 1x1 透明 PNG，base64 inline，发一次最小 chat/completions 探测
+                tiny_png_b64 = (
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+                    "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                )
+                payload = {
+                    "model": cfg.get("model"),
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "ping"},
+                            {"type": "image_url",
+                             "image_url": {"url": f"data:image/png;base64,{tiny_png_b64}"}},
+                        ],
+                    }],
+                    "max_tokens": 4,
+                }
+                r = await c.post(
+                    f"{cfg['base_url'].rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {cfg['api_key']}",
+                             "Content-Type": "application/json"},
+                    json=payload,
+                )
+                ok = r.status_code == 200
+                msg = f"HTTP {r.status_code}" if ok else r.text[:200]
         else:
             return False, f"unknown provider: {provider}"
     except AdapterError as e:
