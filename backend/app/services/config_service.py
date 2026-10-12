@@ -67,11 +67,13 @@ PROVIDER_SCHEMA: dict[str, dict[str, dict]] = {
     },
     "vlm_ocr": {
         # OCR via Vision-Language Model (OpenAI/OpenRouter 兼容协议)
-        # 典型配置：OpenRouter 免费 VLM（google/gemma-4-31b-it:free 等）
+        # ⚠️ 2026-10 实测：OpenRouter 的 google/gemma-4-31b-it:free 走 Google Vertex 共享免费池，
+        #    被全球开发者挤爆，大批量 OCR 几乎必 429。改用 NVIDIA 自建上游的 Nemotron Nano Omni
+        #    或多提供商混合路由能显著缓解。
         "api_key":   {"type": "string", "secret": True,  "default": "", "desc": "OpenRouter / 其他 VLM 服务商 API Key"},
         "base_url":  {"type": "string", "secret": False, "default": "https://openrouter.ai/api/v1", "desc": "OpenAI 兼容 base_url（不含尾部 /chat/completions）"},
-        "model":     {"type": "string", "secret": False, "default": "google/gemma-4-31b-it:free", "desc": "VLM 模型 ID；OpenRouter 示例：google/gemma-4-31b-it:free / qwen/qwen2-vl-72b-instruct:free"},
-        "fallback_models": {"type": "string", "secret": False, "default": "qwen/qwen2-vl-72b-instruct:free,google/gemma-3-27b-it:free,meta-llama/llama-3.2-11b-vision-instruct:free", "desc": "降级模型列表（逗号分隔）：主模型 429/5xx 时自动尝试"},
+        "model":     {"type": "string", "secret": False, "default": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "desc": "VLM 模型 ID；OpenRouter 真实免费 VLM 示例：nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free（NVIDIA 自建，推荐）/ google/gemma-4-31b-it:free（Google 池常被挤爆）/ dots-studio/dots-3-note-preview:free / openrouter/free（随机路由）"},
+        "fallback_models": {"type": "string", "secret": False, "default": "openrouter/free,dots-studio/dots-3-note-preview:free,google/gemma-4-26b-a4b-it:free,google/gemma-4-31b-it:free", "desc": "降级模型列表（逗号分隔，仅填真实存在的免费 VLM）：主模型 429/5xx 时自动尝试"},
         "prompt":    {"type": "string", "secret": False, "default": "You are an OCR engine for manga/comic panels. Extract ALL readable Chinese or Japanese or English text from the image. Output ONLY the raw text content, one line per speech bubble or caption, no explanations, no translations, no numbering. If no text is present, output an empty string.", "desc": "系统提示词，决定 OCR 行为"},
         "max_tokens":{"type": "int",    "secret": False, "default": 1024, "desc": "每次调用最大 token"},
         "timeout":   {"type": "int",    "secret": False, "default": 60,   "desc": "单次请求超时（秒）"},

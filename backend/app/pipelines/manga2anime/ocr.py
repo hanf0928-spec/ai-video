@@ -86,7 +86,7 @@ def _vlm_ocr(image_path: Path) -> List[Bubble]:
     cfg = get_config("vlm_ocr")
     api_key = cfg.get("api_key") or ""
     base_url = (cfg.get("base_url") or "").rstrip("/")
-    model = cfg.get("model") or "google/gemma-4-31b-it:free"
+    model = cfg.get("model") or "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
     prompt = cfg.get("prompt") or "Extract all text from this image. Output only the raw text."
     try:
         max_tokens = int(cfg.get("max_tokens") or 1024)
