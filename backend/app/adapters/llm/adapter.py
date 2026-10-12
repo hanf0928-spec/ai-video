@@ -76,13 +76,32 @@ class LLMAdapter:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     async def chat(self, messages: list[dict], *, response_format_json: bool = False) -> str:
-        payload = {"model": self.model, "messages": messages, "temperature": 0.8}
+        """Call OpenAI-compatible chat API.
+
+        Note: `response_format: {type: 'json_object'}` is a OpenAI feature; many
+        providers (Nemotron, Gemma, DeepSeek-free, etc.) will 400 on it. We
+        auto-retry WITHOUT that field so callers do not need to care.
+        """
+        base_payload = {"model": self.model, "messages": messages, "temperature": 0.8}
+
+        async def _do_post(payload: dict) -> httpx.Response:
+            logger.info(f"[LLM] chat model={self.model} messages={len(messages)} json_mode={bool(payload.get('response_format'))}")
+            return await self._client.post(
+                f"{self.base_url}/chat/completions", headers=self._headers(), json=payload
+            )
+
+        payload = dict(base_payload)
         if response_format_json:
             payload["response_format"] = {"type": "json_object"}
-        logger.info(f"[LLM] chat model={self.model} messages={len(messages)}")
-        r = await self._client.post(
-            f"{self.base_url}/chat/completions", headers=self._headers(), json=payload
-        )
+
+        r = await _do_post(payload)
+        # 如果模型不支持 response_format，大多数网关返回 400 + 关键字 response_format / unsupported
+        if r.status_code == 400 and response_format_json:
+            txt = (r.text or "").lower()
+            if any(k in txt for k in ("response_format", "unsupported", "invalid parameter", "not support")):
+                logger.warning(f"[LLM] {self.model} 不支持 response_format=json_object, 自动去掉重试")
+                r = await _do_post(base_payload)
+
         if r.status_code != 200:
             raise AdapterError(f"LLM chat failed: {r.status_code} {r.text}")
         data = r.json()
@@ -127,16 +146,39 @@ class LLMAdapter:
             ],
             response_format_json=True,
         )
-        return self._safe_parse_json(content)
+        result = self._safe_parse_json(content)
+        shots = result.get("shots") or []
+        logger.info(
+            f"[LLM] panels_to_script done: input_panels={len(panels)}, "
+            f"output_shots={len(shots)}, keys={list(result.keys())}"
+        )
+        if not shots:
+            # 记录完整返回，便于诊断 "empty storyboard"
+            logger.warning(f"[LLM] empty shots. raw content (first 500 chars): {content[:500]}")
+        return result
 
     @staticmethod
     def _safe_parse_json(text: str) -> dict:
-        text = text.strip()
-        # strip ```json blocks if present
-        if text.startswith("```"):
-            text = text.strip("`")
-            if text.startswith("json"):
-                text = text[4:]
+        """Parse LLM output into dict, tolerating markdown fences / prefixes / suffixes."""
+        import re
+
+        text = (text or "").strip()
+        if not text:
+            logger.warning("[LLM] _safe_parse_json received empty text")
+            return {}
+
+        # 1) 去 markdown 代码围栏 ```json ... ``` 或 ``` ... ```
+        fence = re.match(r"^```(?:json|JSON)?\s*\n?(.*?)\n?```\s*$", text, re.DOTALL)
+        if fence:
+            text = fence.group(1).strip()
+
+        # 2) 常见 LLM 在 JSON 前后加前言/说明，截取第一个 { 到最后一个 }
+        if not text.startswith("{"):
+            lb = text.find("{")
+            rb = text.rfind("}")
+            if lb != -1 and rb != -1 and rb > lb:
+                text = text[lb : rb + 1]
+
         try:
             return json.loads(text)
         except json.JSONDecodeError as e:

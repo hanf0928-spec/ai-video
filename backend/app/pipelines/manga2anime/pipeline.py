@@ -117,16 +117,42 @@ class Manga2AnimePipeline:
 
         # ====== 5. Script via LLM ======
         self._p("script", 0.42, "LLM 生成分镜脚本")
+        script: dict = {}
         try:
             script = await panels_to_storyboard(panels_data, style=self.style)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"LLM script failed, falling back to simple script: {e}")
             script = self._fallback_script(panels_data)
+
+        # 兼容各种 LLM 输出形态：
+        #   1) 正常 {"shots": [...]}
+        #   2) 嵌套 {"episodes":[{"shots":[...]}]}（generate_script prompt 的误用）
+        #   3) 空结构 → 走 fallback
+        shots = script.get("shots") or []
+        if not shots and isinstance(script.get("episodes"), list) and script["episodes"]:
+            logger.warning("[script] LLM 返回 episodes 嵌套结构，提取第一集的 shots")
+            first_ep = script["episodes"][0] or {}
+            shots = first_ep.get("shots") or []
+            if shots:
+                # 把 episodes 结构摊平，方便下游使用
+                script = {**first_ep, "shots": shots}
+
+        if not shots:
+            logger.warning(
+                f"[script] LLM 返回空分镜（keys={list(script.keys())}, "
+                f"panels={len(panels_data)}）→ 自动降级到 fallback_script"
+            )
+            script = self._fallback_script(panels_data)
+            shots = script.get("shots") or []
+
         # Persist
         (self.workdir / "script.json").write_text(json.dumps(script, ensure_ascii=False, indent=2), encoding="utf-8")
-        shots = script.get("shots") or []
         if not shots:
-            raise PipelineError("empty storyboard")
+            # 走到这里说明连 fallback 都没生成——panels_data 肯定为空（理论上前面 panel 阶段已 raise）
+            raise PipelineError(
+                f"empty storyboard (panels={len(panels_data)}, "
+                f"ocr_text_total_len={sum(len(p.get('ocr_text') or '') for p in panels_data)})"
+            )
         self._p("script", 0.5, f"分镜 {len(shots)} 个")
 
         # ====== 6. Image preparation (reuse panel images as first frames) ======
