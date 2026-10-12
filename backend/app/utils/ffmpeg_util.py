@@ -81,7 +81,6 @@ def _run_with_codec_fallback(build_cmd, label: str) -> None:
     if _FALLBACK_CODEC not in seq:
         seq.append(_FALLBACK_CODEC)
 
-    last_err: Exception | None = None
     for codec in seq:
         cmd = build_cmd(codec)
         logger.debug(f"ffmpeg[{label}] codec={codec}: {' '.join(cmd)}")
@@ -92,14 +91,22 @@ def _run_with_codec_fallback(build_cmd, label: str) -> None:
             return
         err = r.stderr[-500:]
         tried.append(f"{codec}: {err[-200:]}")
-        # 判断是否是编码器相关问题，其他问题不用换编码器
-        if not any(k in err.lower() for k in (
-            "encoder", "could not open", "not found", "unknown encoder",
-            "invalid argument", "-22"
-        )):
-            raise AppError(f"ffmpeg[{label}] failed: {err}")
-        last_err = AppError(f"ffmpeg[{label}] codec {codec} failed: {err}")
+        err_lower = err.lower()
+
+        # 识别真正的"编码器相关错误"——仅这些错误才值得换编码器重试
+        is_encoder_error = any(k in err_lower for k in (
+            "unknown encoder",
+            "encoder not found",
+            "could not open encoder",
+            "error selecting an encoder",
+        ))
+
+        # 其他错误（filter 图谱、输入文件、权限、磁盘等）与编码器无关，直接抛出
+        if not is_encoder_error:
+            raise AppError(f"ffmpeg[{label}] failed (非编码器问题): {err}")
+
         logger.warning(f"ffmpeg[{label}] codec {codec} 失败，尝试下一个编码器")
+
     raise AppError(f"ffmpeg[{label}] 所有编码器都失败：\n" + "\n".join(tried))
 
 
@@ -159,26 +166,93 @@ def mix_audio(audio_list: Iterable[str], output: str, *, volumes: list[float] | 
     return str(output)
 
 
+def _has_audio_stream(path: str | Path) -> bool:
+    """Return True if the given media file has at least one audio stream."""
+    r = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "a",
+            "-show_entries", "stream=index",
+            "-of", "csv=p=0",
+            str(path),
+        ],
+        capture_output=True, text=True,
+    )
+    return r.returncode == 0 and bool(r.stdout.strip())
+
+
 def concat_videos(videos: list[str], output: str) -> str:
-    """Concat multiple videos with re-encoding (safe for differing codecs)."""
+    """Concat multiple videos with re-encoding (safe for differing codecs).
+
+    FFmpeg concat filter 要求所有输入流配置一致。如果某些 shot 没有音频流
+    （常见于 image_to_video 的 fallback 视频），我们用 anullsrc 为它们生成
+    静音音轨，保证 concat 稳定。
+    """
     if not videos:
         raise AppError("concat_videos: empty list")
+
+    n = len(videos)
+    # 1) 探测每个输入是否有音频
+    audio_flags = [_has_audio_stream(v) for v in videos]
+    has_any_audio = any(audio_flags)
+    all_have_audio = all(audio_flags)
+
+    logger.debug(
+        f"concat_videos: n={n}, audio_flags={audio_flags}, "
+        f"has_any_audio={has_any_audio}, all_have_audio={all_have_audio}"
+    )
+
     inputs: list[str] = []
     for v in videos:
         inputs += ["-i", str(v)]
-    n = len(videos)
-    filter_parts = []
-    for i in range(n):
-        filter_parts.append(f"[{i}:v:0][{i}:a:0?]")
-    filt = "".join(filter_parts) + f"concat=n={n}:v=1:a=1[outv][outa]"
+
+    # 2) 根据有没有音频决定 filtergraph
+    if all_have_audio:
+        # 所有输入都有音频：最简单的 concat
+        filter_parts = "".join(f"[{i}:v:0][{i}:a:0]" for i in range(n))
+        filt = f"{filter_parts}concat=n={n}:v=1:a=1[outv][outa]"
+        maps = ["-map", "[outv]", "-map", "[outa]"]
+        audio_codec_args = ["-c:a", "aac", "-b:a", "192k"]
+    elif has_any_audio:
+        # 混合情况：给没音频的 shot 用 anullsrc 补静音
+        # 先为每个无音频输入生成一个 anullsrc 音轨 [slience_i]
+        silent_parts = []
+        for i in range(n):
+            if not audio_flags[i]:
+                # 用 anullsrc 生成和原视频等长的静音
+                # 注意：这里我们生成一个任意长度（concat filter 会按视频长度匹配），
+                # 不加 trim，让 concat 自己处理
+                silent_parts.append(
+                    f"anullsrc=channel_layout=stereo:sample_rate=44100[silent{i}]"
+                )
+        # 构造 concat 的每对输入
+        pairs = []
+        for i in range(n):
+            if audio_flags[i]:
+                pairs.append(f"[{i}:v:0][{i}:a:0]")
+            else:
+                pairs.append(f"[{i}:v:0][silent{i}]")
+        concat_part = "".join(pairs) + f"concat=n={n}:v=1:a=1[outv][outa]"
+        if silent_parts:
+            filt = ";".join(silent_parts) + ";" + concat_part
+        else:
+            filt = concat_part
+        maps = ["-map", "[outv]", "-map", "[outa]"]
+        audio_codec_args = ["-c:a", "aac", "-b:a", "192k"]
+    else:
+        # 完全没有音频：只合并视频，不输出音频流
+        filter_parts = "".join(f"[{i}:v:0]" for i in range(n))
+        filt = f"{filter_parts}concat=n={n}:v=1:a=0[outv]"
+        maps = ["-map", "[outv]"]
+        audio_codec_args = []  # 没音频，不加 -c:a
 
     def _build(codec: str) -> list[str]:
         cmd = [
             "ffmpeg", "-y", *inputs,
             "-filter_complex", filt,
-            "-map", "[outv]", "-map", "[outa]",
+            *maps,
             "-c:v", codec,
-            "-c:a", "aac", "-b:a", "192k",
+            *audio_codec_args,
             str(output),
         ]
         if codec == "mpeg4":
