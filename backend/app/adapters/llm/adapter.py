@@ -81,11 +81,33 @@ class LLMAdapter:
         Note: `response_format: {type: 'json_object'}` is a OpenAI feature; many
         providers (Nemotron, Gemma, DeepSeek-free, etc.) will 400 on it. We
         auto-retry WITHOUT that field so callers do not need to care.
+
+        For OpenRouter "reasoning" models (nemotron, deepseek-r1, …), content
+        may be empty because the real answer lives in `reasoning_content`.
+        We explicitly disable reasoning for those models and fallback to
+        reading reasoning_content if content is empty.
         """
-        base_payload = {"model": self.model, "messages": messages, "temperature": 0.8}
+        base_payload: dict = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.8,
+            # 保证输出足够长的 JSON；不同网关对 max_tokens 命名略有差异，OpenRouter 用 max_tokens
+            "max_tokens": 4096,
+        }
+
+        # 对 OpenRouter 的 reasoning 模型显式关闭思考模式，否则 content 常为空
+        model_lower = (self.model or "").lower()
+        if any(k in model_lower for k in ("nemotron", "deepseek-r1", "reasoning", "o1", "o3", "qwq")):
+            # OpenRouter 规范：reasoning={"exclude": true} 不返回 reasoning tokens
+            # 并把 effort 调到 low，让模型少想多输出
+            base_payload["reasoning"] = {"exclude": True, "effort": "low"}
 
         async def _do_post(payload: dict) -> httpx.Response:
-            logger.info(f"[LLM] chat model={self.model} messages={len(messages)} json_mode={bool(payload.get('response_format'))}")
+            logger.info(
+                f"[LLM] chat model={self.model} messages={len(messages)} "
+                f"json_mode={bool(payload.get('response_format'))} "
+                f"reasoning={bool(payload.get('reasoning'))}"
+            )
             return await self._client.post(
                 f"{self.base_url}/chat/completions", headers=self._headers(), json=payload
             )
@@ -106,7 +128,19 @@ class LLMAdapter:
             raise AdapterError(f"LLM chat failed: {r.status_code} {r.text}")
         data = r.json()
         try:
-            return data["choices"][0]["message"]["content"]
+            msg = data["choices"][0]["message"]
+            content = msg.get("content") or ""
+            # Reasoning 模型兜底：content 为空时去 reasoning_content / reasoning 字段取
+            if not content.strip():
+                for alt_key in ("reasoning_content", "reasoning"):
+                    alt = msg.get(alt_key)
+                    if isinstance(alt, str) and alt.strip():
+                        logger.warning(
+                            f"[LLM] {self.model} content 为空，使用 {alt_key} 字段兜底"
+                        )
+                        content = alt
+                        break
+            return content
         except (KeyError, IndexError) as e:
             raise AdapterError(f"LLM invalid response: {data}") from e
 
