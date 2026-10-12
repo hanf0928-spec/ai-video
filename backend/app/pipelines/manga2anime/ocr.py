@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -19,6 +20,10 @@ class Bubble:
 
 
 _ocr_singleton = None
+
+# VLM OCR 全局冷却状态（进程级）：until = time.monotonic 时间戳
+# 连续 429 时写入未来时间戳，让下一张图进入前先 sleep
+_vlm_cooldown: dict = {"until": 0.0}
 
 
 def _get_ocr():
@@ -69,6 +74,11 @@ def _vlm_ocr(image_path: Path) -> List[Bubble]:
 
     Config is pulled from the `vlm_ocr` provider at call time so the user can
     update API key / model without restarting workers.
+
+    Robustness:
+        * 自动重试 429 / 5xx（指数退避 + 尊重 Retry-After header）
+        * 主模型耗尽后尝试 fallback_models 列表
+        * 全局限流冷却：连续多次 429 后短暂休眠，避免雪崩调用
     """
     import httpx
     from ...services.config_service import get_config
@@ -86,28 +96,34 @@ def _vlm_ocr(image_path: Path) -> List[Bubble]:
         timeout = float(cfg.get("timeout") or 60)
     except (TypeError, ValueError):
         timeout = 60.0
+    try:
+        retry_attempts = max(1, int(cfg.get("retry_attempts") or 4))
+    except (TypeError, ValueError):
+        retry_attempts = 4
+    try:
+        retry_base_delay = float(cfg.get("retry_base_delay") or 2.0)
+    except (TypeError, ValueError):
+        retry_base_delay = 2.0
+
+    fallback_raw = cfg.get("fallback_models") or ""
+    fallback_models = [m.strip() for m in str(fallback_raw).split(",") if m.strip() and m.strip() != model]
 
     if not api_key or not base_url:
         logger.warning("[vlm_ocr] api_key / base_url 未配置，返回空结果")
         return []
+
+    # 全局冷却窗口（进程级），避免一张图挂了后下一张立刻又 429
+    now = time.monotonic()
+    if _vlm_cooldown["until"] > now:
+        wait = _vlm_cooldown["until"] - now
+        logger.info(f"[vlm_ocr] 全局冷却中，sleep {wait:.1f}s")
+        time.sleep(wait)
 
     data = image_path.read_bytes()
     b64 = base64.b64encode(data).decode("ascii")
     mime = _detect_mime(image_path)
     data_url = f"data:{mime};base64,{b64}"
 
-    payload = {
-        "model": model,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": data_url}},
-            ],
-        }],
-        "max_tokens": max_tokens,
-        "temperature": 0.0,
-    }
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -116,24 +132,94 @@ def _vlm_ocr(image_path: Path) -> List[Bubble]:
         "X-Title": "AI Manga Studio",
     }
 
-    try:
-        with httpx.Client(timeout=timeout) as c:
-            r = c.post(f"{base_url}/chat/completions", headers=headers, json=payload)
-        if r.status_code != 200:
-            logger.warning(f"[vlm_ocr] HTTP {r.status_code}: {r.text[:200]}")
-            return []
-        resp = r.json()
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"[vlm_ocr] request failed on {image_path.name}: {e}")
+    def _parse_retry_after(resp: httpx.Response, attempt: int) -> float:
+        """优先取 Retry-After header（秒或 HTTP-date），兜底用指数退避。"""
+        ra = resp.headers.get("Retry-After") or resp.headers.get("retry-after")
+        if ra:
+            try:
+                return min(float(ra), 60.0)  # 封顶 60s，避免 OpenRouter 发个 300s 拖死整个任务
+            except ValueError:
+                pass
+        # 指数退避：base * 2^(attempt-1)，封顶 30s
+        return min(retry_base_delay * (2 ** (attempt - 1)), 30.0)
+
+    def _call_one_model(model_id: str) -> tuple[Optional[str], Optional[str]]:
+        """Try ONE model with retries. Returns (text, None) on success,
+        (None, reason) on terminal failure (so caller can try next model)."""
+        payload = {
+            "model": model_id,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            }],
+            "max_tokens": max_tokens,
+            "temperature": 0.0,
+        }
+        last_reason = "unknown"
+        for attempt in range(1, retry_attempts + 1):
+            try:
+                with httpx.Client(timeout=timeout) as c:
+                    r = c.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+            except Exception as e:  # noqa: BLE001
+                last_reason = f"network: {e}"
+                if attempt < retry_attempts:
+                    delay = min(retry_base_delay * (2 ** (attempt - 1)), 30.0)
+                    logger.warning(f"[vlm_ocr] {model_id} 网络异常，{delay:.1f}s 后重试 ({attempt}/{retry_attempts}): {e}")
+                    time.sleep(delay)
+                    continue
+                return None, last_reason
+
+            if r.status_code == 200:
+                try:
+                    resp = r.json()
+                    content = (resp["choices"][0]["message"]["content"] or "").strip()
+                    return content, None
+                except (KeyError, IndexError, TypeError, ValueError) as e:
+                    last_reason = f"malformed: {e}"
+                    logger.warning(f"[vlm_ocr] {model_id} 响应解析失败: {r.text[:200]}")
+                    return None, last_reason
+
+            # 429 / 503 / 502 / 504 → 重试
+            if r.status_code in (429, 500, 502, 503, 504):
+                reason = r.text[:200]
+                last_reason = f"HTTP {r.status_code}: {reason}"
+                if attempt < retry_attempts:
+                    delay = _parse_retry_after(r, attempt)
+                    logger.warning(f"[vlm_ocr] {model_id} HTTP {r.status_code}，{delay:.1f}s 后重试 ({attempt}/{retry_attempts})")
+                    time.sleep(delay)
+                    continue
+                # 终局 429：触发全局冷却（给下一张图喘息机会）
+                if r.status_code == 429:
+                    _vlm_cooldown["until"] = time.monotonic() + 15.0
+                    logger.warning(f"[vlm_ocr] {model_id} 持续限流，启动 15s 全局冷却")
+                return None, last_reason
+
+            # 其他 4xx 直接认为是终局错误（401 Key 错 / 400 请求错）
+            last_reason = f"HTTP {r.status_code}: {r.text[:200]}"
+            logger.warning(f"[vlm_ocr] {model_id} 终局错误 {r.status_code}: {r.text[:200]}")
+            return None, last_reason
+
+        return None, last_reason
+
+    # 依次尝试：主模型 → fallback_models
+    tried = []
+    for mdl in [model] + fallback_models:
+        tried.append(mdl)
+        text, err = _call_one_model(mdl)
+        if text is not None:
+            if mdl != model:
+                logger.info(f"[vlm_ocr] 主模型失败，备用模型 {mdl} 成功")
+            text_result = text
+            break
+        logger.warning(f"[vlm_ocr] {mdl} 失败 → 尝试下一个: {err}")
+    else:
+        logger.error(f"[vlm_ocr] 所有模型都失败: {tried}")
         return []
 
-    try:
-        text = (resp["choices"][0]["message"]["content"] or "").strip()
-    except (KeyError, IndexError, TypeError):
-        logger.warning(f"[vlm_ocr] malformed response: {resp}")
-        return []
-
-    if not text:
+    if not text_result:
         return []
 
     # VLM 不返回每行坐标。用整张图尺寸作为 bbox 占位，交给下游 group_bubbles 原样返回。
@@ -141,7 +227,7 @@ def _vlm_ocr(image_path: Path) -> List[Bubble]:
     bbox = (0, 0, int(w), int(h))
 
     bubbles: list[Bubble] = []
-    for line in text.splitlines():
+    for line in text_result.splitlines():
         s = line.strip().strip("•- ").strip()
         if not s:
             continue
