@@ -41,14 +41,52 @@ def load_pages(file_path: str | Path, work_dir: str | Path) -> List[Path]:
 
 
 def _pdf_to_images(pdf: Path, work: Path, *, dpi: int = 200) -> List[Path]:
+    """Render each page of a PDF to PNG.
+
+    Prefer PyMuPDF (pure-Python wheel, no system dependency).
+    Fallback to pdf2image (requires poppler-utils in PATH) for compatibility.
+    """
+    # ---------- Preferred: PyMuPDF (fitz) ----------
+    try:
+        import fitz  # PyMuPDF
+    except Exception:  # noqa: BLE001
+        fitz = None
+
+    if fitz is not None:
+        try:
+            logger.info(f"[pipeline] rendering PDF {pdf.name} via PyMuPDF dpi={dpi}")
+            doc = fitz.open(str(pdf))
+            zoom = dpi / 72.0  # fitz default is 72 dpi
+            mat = fitz.Matrix(zoom, zoom)
+            out: list[Path] = []
+            for i, page in enumerate(doc):
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                dst = work / f"page_{i:04d}.png"
+                pix.save(str(dst))
+                out.append(dst)
+            doc.close()
+            return out
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[pipeline] PyMuPDF failed, fallback to pdf2image: {e}")
+
+    # ---------- Fallback: pdf2image (needs poppler) ----------
     try:
         from pdf2image import convert_from_path
     except Exception as e:  # noqa: BLE001
-        raise PipelineError(f"pdf2image not available: {e}") from e
+        raise PipelineError(
+            "PDF rendering unavailable: PyMuPDF import failed and pdf2image not installed. "
+            "Install either `pip install PyMuPDF` or `apt/yum install poppler-utils`."
+        ) from e
 
-    logger.info(f"[pipeline] rendering PDF {pdf.name} dpi={dpi}")
-    images = convert_from_path(str(pdf), dpi=dpi)
-    out: list[Path] = []
+    logger.info(f"[pipeline] rendering PDF {pdf.name} via pdf2image dpi={dpi}")
+    try:
+        images = convert_from_path(str(pdf), dpi=dpi)
+    except Exception as e:  # noqa: BLE001
+        raise PipelineError(
+            f"pdf2image failed (missing poppler? run `yum install -y poppler-utils` on CentOS/OpenCloudOS, "
+            f"or `apt install -y poppler-utils` on Debian/Ubuntu). Original error: {e}"
+        ) from e
+    out = []
     for i, im in enumerate(images):
         dst = work / f"page_{i:04d}.png"
         im.save(dst, "PNG")

@@ -28,6 +28,9 @@ tenacity==9.0.0
 
 # ======== Image / PDF ========
 Pillow==10.4.0
+# PyMuPDF 为首选 PDF 渲染后端，纯 Python wheel，无需 poppler 系统包
+PyMuPDF==1.24.10
+# pdf2image 作为兜底方案，需要系统包 poppler-utils
 pdf2image==1.17.0
 opencv-python==4.10.0.84
 numpy==1.26.4
