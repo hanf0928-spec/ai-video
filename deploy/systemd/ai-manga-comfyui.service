@@ -7,11 +7,17 @@ After=network.target
 Type=simple
 # User=www-data
 # Group=www-data
-WorkingDirectory=/opt/ai-manga/comfyui_fork
+# 工作目录指向 ComfyUI 本体
+WorkingDirectory=/root/ai-video/comfyui_fork/ComfyUI
+# 让 ComfyUI 自定义节点可以 import 到项目 backend 包（adapters 等）
+Environment="PYTHONPATH=/root/ai-video"
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=-/root/ai-video/.env
 # ComfyUI 只监听 127.0.0.1，不暴露公网（由后端代理调用）
-ExecStart=/opt/ai-manga/.venv/bin/python main.py --listen 127.0.0.1 --port 8188
+ExecStart=/root/ai-video/.venv/bin/python main.py --listen 127.0.0.1 --port 8188
 Restart=on-failure
 RestartSec=10
+TimeoutStartSec=120
 StandardOutput=append:/var/log/ai-manga/comfyui.log
 StandardError=append:/var/log/ai-manga/comfyui.log
 

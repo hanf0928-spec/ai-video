@@ -34,19 +34,33 @@ async def generate_script(body: ScriptGenerateRequest):
 
 @router.post("/shot", response_model=ResponseModel)
 async def generate_shot(body: GenerateShotRequest, db: Session = Depends(get_db)):
-    """Generate a single shot's video synchronously."""
+    """Generate a single shot's video synchronously.
+
+    - When ``shot.image_url`` is provided, the adapter runs I2V (image-to-video).
+    - Otherwise falls back to T2V (text-to-video). Prompt is required in that case.
+    """
     shot = db.get(Shot, body.shot_id)
     if not shot:
         raise HTTPException(404, "shot not found")
-    if not shot.image_url:
-        raise HTTPException(400, "shot has no image_url (first frame)")
+
+    # T2V requires a non-empty prompt
+    if not shot.image_url and not (shot.prompt and shot.prompt.strip()):
+        raise HTTPException(
+            400,
+            "shot has neither first-frame image nor prompt; please fill in a prompt first",
+        )
+
+    extra = dict(body.extra or {})
+    # Default aspect ratio for T2V so adapter does not fall back silently.
+    if not shot.image_url and "aspect_ratio" not in extra:
+        extra["aspect_ratio"] = "16:9"
 
     adapter = get_video_adapter(body.backend)
     req = VideoGenRequest(
         prompt=shot.prompt or "anime scene",
-        image_url=shot.image_url,
+        image_url=shot.image_url,  # may be None -> adapter will run T2V
         duration=shot.duration or 4.0,
-        **body.extra,
+        **extra,
     )
     shot.status = "running"
     db.add(shot); db.commit()
