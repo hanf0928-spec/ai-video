@@ -67,10 +67,10 @@ PROVIDER_SCHEMA: dict[str, dict[str, dict]] = {
     },
     "vlm_ocr": {
         # OCR via Vision-Language Model (OpenAI/OpenRouter 兼容协议)
-        # 典型配置：OpenRouter 免费 VLM（google/gemma-3-27b-it:free 等）
+        # 典型配置：OpenRouter 免费 VLM（google/gemma-4-31b-it:free 等）
         "api_key":   {"type": "string", "secret": True,  "default": "", "desc": "OpenRouter / 其他 VLM 服务商 API Key"},
         "base_url":  {"type": "string", "secret": False, "default": "https://openrouter.ai/api/v1", "desc": "OpenAI 兼容 base_url（不含尾部 /chat/completions）"},
-        "model":     {"type": "string", "secret": False, "default": "google/gemma-3-27b-it:free", "desc": "VLM 模型 ID；OpenRouter 示例：google/gemma-3-27b-it:free / qwen/qwen2-vl-72b-instruct:free"},
+        "model":     {"type": "string", "secret": False, "default": "google/gemma-4-31b-it:free", "desc": "VLM 模型 ID；OpenRouter 示例：google/gemma-4-31b-it:free / qwen/qwen2-vl-72b-instruct:free"},
         "prompt":    {"type": "string", "secret": False, "default": "You are an OCR engine for manga/comic panels. Extract ALL readable Chinese or Japanese or English text from the image. Output ONLY the raw text content, one line per speech bubble or caption, no explanations, no translations, no numbering. If no text is present, output an empty string.", "desc": "系统提示词，决定 OCR 行为"},
         "max_tokens":{"type": "int",    "secret": False, "default": 1024, "desc": "每次调用最大 token"},
         "timeout":   {"type": "int",    "secret": False, "default": 60,   "desc": "单次请求超时（秒）"},
