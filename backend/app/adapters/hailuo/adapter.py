@@ -13,6 +13,12 @@ Endpoints:
   - T2VA 文生视频     : 仅 text（必须显式指定 ratio）
   - I2VA 图生视频     : text + image_url(role=first_frame[/last_frame])
   - R2VA 全能参考生成 : text + 任意组合参考 image / video / audio
+
+本地图片公网桥接：
+  pipeline 的首帧用的是本地文件路径（如 data/outputs/{pid}/m2a_xxx/panels/*.png）。
+  海螺03 不支持 base64 内联，必须公网 URL。本 adapter 通过 config.hailuo.public_base_url
+  自动把 OUTPUT_DIR / UPLOAD_DIR 内的本地文件拼接成 `${public_base_url}/static/outputs/...`，
+  由后端 FastAPI 的 StaticFiles 直接对外提供。
 """
 from __future__ import annotations
 
@@ -22,6 +28,7 @@ from typing import Any, Optional
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from ...core.config import settings
 from ...core.exceptions import AdapterError
 from ...core.logger import logger
 from ...services.config_service import ensure_configured
@@ -53,6 +60,8 @@ class HailuoAdapter(VideoAdapter):
         self.api_key = api_key or cfg.get("api_key") or ""
         # base_url 对应 PDF 中的 ${AI_GATEWAY_BASE_URL}
         self.base_url = (base_url or cfg.get("base_url") or "").rstrip("/")
+        # 本服务公网基础 URL（用于把本地 image_path 拼成公网 URL 喂给海螺）
+        self.public_base_url = (cfg.get("public_base_url") or "").rstrip("/")
         self.model = model or cfg.get("model") or "MiniMax-H3"
         self._default_duration = int(cfg.get("default_duration") or 5)
         self._default_resolution = str(cfg.get("default_resolution") or "768P")
@@ -97,26 +106,62 @@ class HailuoAdapter(VideoAdapter):
         r = (resolution or self._default_resolution or "768P").strip().upper()
         return r if r in _ALLOWED_RESOLUTIONS else "768P"
 
-    @staticmethod
-    def _build_content(req: VideoGenRequest) -> list[dict]:
+    # ---------- local → public URL bridge ----------
+    def _local_path_to_public_url(self, image_path: str) -> str:
+        """把本地文件路径拼成公网可访问的 URL。
+
+        规则：
+          - 文件必须位于 OUTPUT_DIR 或 UPLOAD_DIR 之内（分别对应 /static/outputs/、/static/uploads/）
+          - public_base_url 必须已配置
+
+        失败时抛出 AdapterError 给出明确提示。
+        """
+        if not self.public_base_url:
+            raise AdapterError(
+                "海螺03 public_base_url 未配置。请到「模型配置」页的「海螺 03」卡片填写本服务公网 URL "
+                "（例如 http://你的公网IP 或 https://你的域名），否则无法把本地首帧图片喂给海螺。"
+            )
+
+        try:
+            abs_img = Path(image_path).resolve()
+        except Exception as e:  # noqa: BLE001
+            raise AdapterError(f"image_path 无效：{image_path} ({e})") from e
+
+        if not abs_img.exists():
+            raise AdapterError(f"image_path 不存在：{abs_img}")
+
+        candidates = [
+            (Path(settings.OUTPUT_DIR).resolve(), "outputs"),
+            (Path(settings.UPLOAD_DIR).resolve(), "uploads"),
+        ]
+        for base, prefix in candidates:
+            try:
+                rel = abs_img.relative_to(base).as_posix()
+                return f"{self.public_base_url}/static/{prefix}/{rel}"
+            except ValueError:
+                continue
+
+        raise AdapterError(
+            f"image_path 不在 OUTPUT_DIR / UPLOAD_DIR 之内，无法生成公网 URL：{abs_img}. "
+            f"请把文件放到 {settings.OUTPUT_DIR} 或 {settings.UPLOAD_DIR} 之内。"
+        )
+
+    def _build_content(self, req: VideoGenRequest) -> list[dict]:
         """根据请求组装多模态 content 数组。
 
         - 必须包含一个非空 text 元素
         - image_url 使用公网可访问 URL（PDF 明确要求：不支持 Cookie/登录态/内网）
-        - 本地文件 (image_path) 当前不支持，直接抛错指引
+        - 若请求只提供 image_path（本地文件），会用 public_base_url 自动转为公网 URL
         """
         content: list[dict] = [{"type": "text", "text": req.prompt or ""}]
 
         extra = req.extra or {}
 
-        # 首帧
+        # 首帧：优先 req.image_url；否则用 extra.first_frame_url；最后尝试本地路径转公网
         first_frame_url = req.image_url or extra.get("first_frame_url")
         if not first_frame_url and req.image_path:
-            raise AdapterError(
-                "海螺03 新接口要求首帧图片使用公网可访问 URL。"
-                "请先将本地图片上传至对象存储（如 COS/OSS/S3）后，"
-                "通过 req.image_url 传入；暂不支持 base64 内联。"
-            )
+            first_frame_url = self._local_path_to_public_url(req.image_path)
+
         if first_frame_url:
             content.append({
                 "type": "image_url",
@@ -192,12 +237,21 @@ class HailuoAdapter(VideoAdapter):
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     async def submit(self, req: VideoGenRequest) -> VideoGenResult:
         payload = self._build_payload(req)
+
+        # 提取 first_frame_url 便于排查（海螺侧要能真的下载到这个 URL）
+        first_frame_url = ""
+        for c in payload["content"]:
+            if c.get("role") == "first_frame":
+                first_frame_url = (c.get("image_url") or {}).get("url", "")
+                break
+
         logger.info(
-            "[Hailuo] submit prompt='%s...' duration=%s resolution=%s roles=%s",
+            "[Hailuo] submit prompt='%s...' duration=%s resolution=%s roles=%s first_frame=%s",
             (req.prompt or "")[:60],
             payload["duration"],
             payload["resolution"],
             [c.get("role") or c.get("type") for c in payload["content"]],
+            (first_frame_url[:100] + "...") if len(first_frame_url) > 100 else first_frame_url,
         )
 
         url = f"{self.base_url}/minimax/v2/video_generation"

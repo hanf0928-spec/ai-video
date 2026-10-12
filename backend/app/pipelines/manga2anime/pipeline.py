@@ -183,7 +183,20 @@ class Manga2AnimePipeline:
                 await adapter.download(res, str(dst))
                 shot_videos.append(str(dst))
             except Exception as e:  # noqa: BLE001
-                logger.error(f"shot {i} generation failed, fallback to still-image video: {e}")
+                # 打印异常类型 + 真实消息（而不只是 RetryError 的外壳）
+                err_type = type(e).__name__
+                err_msg = str(e)
+                # 透出 tenacity 包裹的内层异常
+                inner = getattr(e, "last_attempt", None)
+                if inner is not None:
+                    try:
+                        inner_exc = inner.exception()
+                        err_msg = f"{err_type}: {err_msg} <- {type(inner_exc).__name__}: {inner_exc}"
+                    except Exception:  # noqa: BLE001
+                        pass
+                else:
+                    err_msg = f"{err_type}: {err_msg}"
+                logger.error(f"shot {i} generation failed, fallback to still-image video: {err_msg}")
                 dst = self.workdir / "shots" / f"shot_{i:03d}.mp4"
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 image_to_video(shot["first_frame"], shot["duration"], str(dst))

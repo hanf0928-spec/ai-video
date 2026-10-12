@@ -33,6 +33,7 @@ PROVIDER_SCHEMA: dict[str, dict[str, dict]] = {
         # EdgeOne Makers Model Pro 网关 + Minimax H3 (V1.2)
         "api_key":  {"type": "string", "secret": True,  "default": "", "desc": "EdgeOne 网关 API Key"},
         "base_url": {"type": "string", "secret": False, "default": "", "desc": "EdgeOne 网关域名（$AI_GATEWAY_BASE_URL，不带尾部 /）"},
+        "public_base_url": {"type": "string", "secret": False, "default": "", "desc": "本服务公网基础 URL（例如 http://1.2.3.4 或 https://your-domain.com）。pipeline 的首帧本地图片会通过 /static/outputs/... 拼接为公网 URL 后送给海螺。不填则无法启用 I2V。"},
         "model":    {"type": "string", "secret": False, "default": "MiniMax-H3", "desc": "模型标识（仅记录，实际由网关路由）"},
         "default_duration":    {"type": "int",    "secret": False, "default": 5,     "desc": "默认时长秒（4~15）"},
         "default_resolution":  {"type": "string", "secret": False, "default": "768P", "desc": "分辨率：480P / 720P / 768P"},
@@ -246,6 +247,20 @@ async def test_connection(provider: str) -> tuple[bool, str]:
                 msg = f"HTTP {r.status_code}"
                 if ok and r.status_code >= 400:
                     msg += " (凭证已验证，探测 task 不存在属正常)"
+
+                # 顺便探测 public_base_url（I2V 必备）
+                pub_url = (cfg.get("public_base_url") or "").rstrip("/")
+                if not pub_url:
+                    msg += "；⚠️ 未配置 public_base_url，I2V 将无法启用（会回退到静态图视频）"
+                else:
+                    try:
+                        pr = await c.get(f"{pub_url}/health", timeout=5.0)
+                        if pr.status_code == 200:
+                            msg += f"；✅ public_base_url 可达 ({pub_url})"
+                        else:
+                            msg += f"；⚠️ public_base_url 返回 HTTP {pr.status_code}（请确认公网能访问 {pub_url}/health）"
+                    except Exception as e:  # noqa: BLE001
+                        msg += f"；⚠️ public_base_url 不可达 ({e})"
         elif provider == "seedance":
             cfg = ensure_configured("seedance", "api_key")
             async with httpx.AsyncClient(timeout=10.0) as c:
