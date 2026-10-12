@@ -20,6 +20,7 @@ export default function Manga2AnimePage() {
   const [backend, setBackend] = useState<'hailuo' | 'seedance'>('hailuo')
   const [enableBgm, setEnableBgm] = useState(true)
   const [enableSubtitle, setEnableSubtitle] = useState(true)
+  const [strictVideo, setStrictVideo] = useState(true)
   const [job, setJob] = useState<Job | null>(null)
   const [step, setStep] = useState(0)
 
@@ -41,6 +42,7 @@ export default function Manga2AnimePage() {
       project_id: projectId, upload_id: uploadId,
       video_backend: backend, enable_bgm: enableBgm, enable_subtitle: enableSubtitle,
       shot_duration: 4.0, resolution: '1080P',
+      strict_video: strictVideo,
     })
     setJob(j)
     setStep(2)
@@ -111,6 +113,12 @@ export default function Manga2AnimePage() {
             <Form.Item label="烧录字幕">
               <Switch checked={enableSubtitle} onChange={setEnableSubtitle} />
             </Form.Item>
+            <Form.Item
+              label="严格模式（推荐开启）"
+              extra={"开启后云端 I2V（海螺/Seedance）任何 shot 失败会直接任务失败，便于排查；关闭时失败 shot 降级为静态图视频。"}
+            >
+              <Switch checked={strictVideo} onChange={setStrictVideo} />
+            </Form.Item>
             <Space>
               <Button onClick={() => setStep(0)}>上一步</Button>
               <Button type="primary" icon={<PlayCircleOutlined />} onClick={onConvert}>
@@ -135,9 +143,9 @@ export default function Manga2AnimePage() {
           {job.status === 'success' && (
             <>
               <Alert type="success" message="生成完成！" />
-              {job.result?.video_path && (
+              {job.result?.video_url && (
                 <video
-                  src={`/static/outputs/${job.result.video_path.split('/outputs/')[1]}`}
+                  src={job.result.video_url}
                   controls style={{ width: '100%', marginTop: 12 }}
                 />
               )}

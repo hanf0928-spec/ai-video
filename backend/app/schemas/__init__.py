@@ -210,6 +210,10 @@ class Manga2AnimeRequest(BaseModel):
     enable_subtitle: bool = True
     shot_duration: float = 4.0
     resolution: str = "1080P"
+    strict_video: bool = Field(
+        False,
+        description="True 时云端 I2V 任何 shot 失败都直接整个任务失败，便于排查 adapter 配置问题；False 时降级为静态图视频",
+    )
 
 
 class GenerateShotRequest(BaseModel):

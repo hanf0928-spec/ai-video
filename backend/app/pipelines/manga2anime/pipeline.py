@@ -46,6 +46,7 @@ class Manga2AnimePipeline:
         enable_subtitle: bool = True,
         shot_duration: float = 4.0,
         resolution: str = "1080P",
+        strict_video: bool = False,
         on_progress: Optional[ProgressCallback] = None,
     ):
         self.upload_path = Path(upload_path)
@@ -57,6 +58,9 @@ class Manga2AnimePipeline:
         self.enable_subtitle = enable_subtitle
         self.shot_duration = shot_duration
         self.resolution = resolution
+        # strict_video=True 时，任何 shot 的云端 I2V 失败都会直接让整个任务 failed，
+        # 便于用户立刻发现 adapter 配置问题；False 时降级为静态图视频
+        self.strict_video = strict_video
         self.on_progress = on_progress or (lambda s, p, m: None)
 
         self.run_id = uuid.uuid4().hex[:12]
@@ -196,6 +200,13 @@ class Manga2AnimePipeline:
                         pass
                 else:
                     err_msg = f"{err_type}: {err_msg}"
+
+                if self.strict_video:
+                    # 严格模式：直接让任务失败，便于用户发现 adapter 配置问题
+                    raise PipelineError(
+                        f"shot {i} 云端 I2V 失败且 strict_video=True：{err_msg}"
+                    )
+
                 logger.error(f"shot {i} generation failed, fallback to still-image video: {err_msg}")
                 dst = self.workdir / "shots" / f"shot_{i:03d}.mp4"
                 dst.parent.mkdir(parents=True, exist_ok=True)

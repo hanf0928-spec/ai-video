@@ -50,18 +50,40 @@ class VideoAdapter(ABC):
         self,
         req: VideoGenRequest,
         *,
-        poll_interval: float = 5.0,
-        timeout: float = 1200.0,
+        poll_interval: float = 15.0,
+        timeout: float = 1800.0,
     ) -> VideoGenResult:
-        """Submit + poll until finished."""
+        """Submit + poll until finished.
+
+        默认轮询间隔 15s（海螺 PDF 建议 15~30s），默认超时 30 分钟。
+        每次 query 都打日志，便于诊断是否真的在等待云端生成。
+        """
         import asyncio
+        from ..core.logger import logger
+
         res = await self.submit(req)
+        logger.info(f"[{self.name}] task submitted: id={res.task_id} initial_status={res.status}")
         start = asyncio.get_event_loop().time()
+        poll_count = 0
         while res.status in ("pending", "running"):
             await asyncio.sleep(poll_interval)
+            poll_count += 1
             res = await self.query(res.task_id)
-            if asyncio.get_event_loop().time() - start > timeout:
+            elapsed = asyncio.get_event_loop().time() - start
+            logger.info(
+                f"[{self.name}] poll#{poll_count} task={res.task_id} "
+                f"status={res.status} elapsed={elapsed:.0f}s"
+            )
+            if elapsed > timeout:
                 res.status = "failed"
-                res.message = "timeout"
+                res.message = f"timeout after {timeout:.0f}s ({poll_count} polls)"
+                logger.error(f"[{self.name}] {res.message}")
                 break
+        if res.status == "success":
+            logger.info(
+                f"[{self.name}] task {res.task_id} succeeded in "
+                f"{asyncio.get_event_loop().time() - start:.0f}s, video_url={res.video_url[:80] if res.video_url else ''}..."
+            )
+        elif res.status == "failed":
+            logger.error(f"[{self.name}] task {res.task_id} FAILED: {res.message}")
         return res

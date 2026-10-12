@@ -67,7 +67,9 @@ class HailuoAdapter(VideoAdapter):
         self._default_resolution = str(cfg.get("default_resolution") or "768P")
         self._default_ratio = str(cfg.get("default_ratio") or "16:9")
         self._default_remove_audio = self._to_bool(cfg.get("default_remove_audio"))
+        # submit/query 用 60s；download 大视频单独用 300s
         self._client = httpx.AsyncClient(timeout=60.0)
+        self._download_client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
 
     @staticmethod
     def _to_bool(v: Any) -> bool:
@@ -257,12 +259,18 @@ class HailuoAdapter(VideoAdapter):
         url = f"{self.base_url}/minimax/v2/video_generation"
         r = await self._client.post(url, headers=self._headers(), json=payload)
         if r.status_code != 200:
-            raise AdapterError(f"Hailuo submit failed: {r.status_code} {r.text}")
+            # PDF 排障建议：保留 EO-LOG-UUID 和 request_id
+            eo_log = r.headers.get("EO-LOG-UUID") or r.headers.get("eo-log-uuid") or ""
+            raise AdapterError(
+                f"Hailuo submit failed: HTTP {r.status_code} "
+                f"EO-LOG-UUID={eo_log} body={r.text[:300]}"
+            )
         data = r.json()
         # PDF: 响应 { "TaskId": "<task_id>" } —— 注意区分大小写
         task_id = data.get("TaskId") or data.get("task_id")
         if not task_id:
             raise AdapterError(f"Hailuo missing TaskId in response: {data}")
+        logger.info(f"[Hailuo] submit OK task_id={task_id}")
         return VideoGenResult(task_id=str(task_id), status="pending", raw=data)
 
     # ---------- query ----------
@@ -314,10 +322,13 @@ class HailuoAdapter(VideoAdapter):
             raise AdapterError("no video_url to download")
         p = Path(dest)
         p.parent.mkdir(parents=True, exist_ok=True)
-        async with self._client.stream("GET", result.video_url) as r:
+        logger.info(f"[Hailuo] downloading task={result.task_id} -> {p}")
+        async with self._download_client.stream("GET", result.video_url) as r:
             r.raise_for_status()
             with p.open("wb") as f:
                 async for chunk in r.aiter_bytes(1024 * 64):
                     f.write(chunk)
         result.local_path = str(p)
+        size_mb = p.stat().st_size / 1024 / 1024
+        logger.info(f"[Hailuo] downloaded {size_mb:.1f}MB -> {p}")
         return str(p)

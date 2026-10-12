@@ -64,6 +64,7 @@ def task_manga2anime(self, job_id: str, upload_id: str, project_id: str, params:
             enable_subtitle=params.get("enable_subtitle", True),
             shot_duration=params.get("shot_duration", 4.0),
             resolution=params.get("resolution", "1080P"),
+            strict_video=params.get("strict_video", False),
             on_progress=on_progress,
         )
 
