@@ -276,8 +276,20 @@ class Manga2AnimePipeline:
                     logger.warning(f"burn subtitle failed: {e}")
 
         self._p("done", 1.0, "完成")
+
+        # 计算 /static/outputs/... 相对 URL（供前端 <video> 直接播放）
+        video_url: str = ""
+        try:
+            abs_video = Path(final_video).resolve()
+            abs_output = Path(settings.OUTPUT_DIR).resolve()
+            rel = abs_video.relative_to(abs_output).as_posix()
+            video_url = f"/static/outputs/{rel}"
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"compute video_url failed: {e}")
+
         return {
             "video_path": str(final_video),
+            "video_url": video_url,
             "duration": probe_duration(final_video),
             "shots": len(shots),
             "characters": len(characters),
