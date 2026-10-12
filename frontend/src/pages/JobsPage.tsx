@@ -1,6 +1,6 @@
 
 import { useEffect, useState } from 'react'
-import { Progress, Table, Tag, Typography, Space, Button, Modal, Empty, message } from 'antd'
+import { Progress, Table, Tag, Typography, Space, Button, Modal, Empty, message, Alert } from 'antd'
 import { ReloadOutlined, PlayCircleOutlined, DownloadOutlined } from '@ant-design/icons'
 import { listJobs } from '../api'
 import type { Job } from '../types'
@@ -20,8 +20,8 @@ function pickVideoUrl(job: Job): string {
 
 export default function JobsPage() {
   const [list, setList] = useState<Job[]>([])
-  const [preview, setPreview] = useState<{ visible: boolean; url: string; title: string }>({
-    visible: false, url: '', title: '',
+  const [preview, setPreview] = useState<{ visible: boolean; url: string; title: string; codec: string; compatible: boolean }>({
+    visible: false, url: '', title: '', codec: '', compatible: true,
   })
 
   const load = async () => setList(await listJobs())
@@ -37,7 +37,17 @@ export default function JobsPage() {
       message.warning('该任务没有可播放的 video_url，可能是旧版产物。请重跑一次任务。')
       return
     }
-    setPreview({ visible: true, url, title: `${job.type} · ${job.id.slice(0, 8)}` })
+    const r: any = job.result || {}
+    const codec: string = (r.video_codec || '').toString()
+    // 后端如果没传 browser_compatible 字段，默认 true；如果传了 false 一定要尊重它
+    const compatible: boolean = r.browser_compatible !== false
+    setPreview({
+      visible: true,
+      url,
+      title: `${job.type} · ${job.id.slice(0, 8)}`,
+      codec,
+      compatible,
+    })
   }
 
   return (
@@ -121,13 +131,30 @@ export default function JobsPage() {
       <Modal
         open={preview.visible}
         title={`🎬 ${preview.title}`}
-        onCancel={() => setPreview({ visible: false, url: '', title: '' })}
+        onCancel={() => setPreview({ visible: false, url: '', title: '', codec: '', compatible: true })}
         footer={null}
         width={900}
         destroyOnClose
       >
         {preview.url ? (
           <>
+            {!preview.compatible && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message={`视频编码 ${preview.codec || 'unknown'} 浏览器不支持播放`}
+                description={
+                  <div>
+                    <div>浏览器 &lt;video&gt; 只认 h264 / hevc / av1 / vp8 / vp9。当前视频用的是 <code>{preview.codec || 'mpeg4'}</code>，播放会黑屏。</div>
+                    <div style={{ marginTop: 4 }}>
+                      💡 <b>修复方法</b>：在服务器安装带 <code>libx264</code> 的 ffmpeg，然后重跑任务。
+                      或者点下方 <b>⬇️ 下载</b> 用本地播放器（VLC / PotPlayer）打开。
+                    </div>
+                  </div>
+                }
+              />
+            )}
             <video
               src={preview.url}
               controls
@@ -137,6 +164,12 @@ export default function JobsPage() {
             <div style={{ marginTop: 8 }}>
               <Text type="secondary" style={{ fontSize: 12 }}>视频地址：</Text>
               <Text copyable code style={{ fontSize: 12 }}>{preview.url}</Text>
+              {preview.codec && (
+                <>
+                  <Text type="secondary" style={{ fontSize: 12, marginLeft: 12 }}>编码：</Text>
+                  <Tag color={preview.compatible ? 'green' : 'orange'}>{preview.codec}</Tag>
+                </>
+              )}
             </div>
           </>
         ) : (

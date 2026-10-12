@@ -126,9 +126,10 @@ async def render_episode(
         bgm = pick_bgm(emo)
         if bgm:
             import subprocess
+            from ..utils.ffmpeg_util import _ffmpeg_bin
             try:
                 tmp = workdir / "concat_audio.m4a"
-                subprocess.run(["ffmpeg", "-y", "-i", str(concat_out), "-vn", "-c:a", "aac", str(tmp)],
+                subprocess.run([_ffmpeg_bin(), "-y", "-i", str(concat_out), "-vn", "-c:a", "aac", str(tmp)],
                                capture_output=True)
                 mixed = workdir / "mixed.m4a"
                 mix_audio([str(tmp), bgm], str(mixed), volumes=[1.0, 0.25])

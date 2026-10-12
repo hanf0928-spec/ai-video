@@ -258,9 +258,10 @@ class Manga2AnimePipeline:
                 try:
                     # extract current audio from concat_out
                     import subprocess
+                    from ...utils.ffmpeg_util import _ffmpeg_bin
                     tmp_audio = self.workdir / "concat_audio.m4a"
                     subprocess.run(
-                        ["ffmpeg", "-y", "-i", str(concat_out), "-vn", "-c:a", "aac", str(tmp_audio)],
+                        [_ffmpeg_bin(), "-y", "-i", str(concat_out), "-vn", "-c:a", "aac", str(tmp_audio)],
                         capture_output=True,
                     )
                     mixed = self.workdir / "mixed.m4a"
@@ -300,9 +301,38 @@ class Manga2AnimePipeline:
         except Exception as e:  # noqa: BLE001
             logger.warning(f"compute video_url failed: {e}")
 
+        # 探测视频编码类型，便于前端判断浏览器兼容性
+        video_codec: str = ""
+        browser_compatible: bool = True
+        try:
+            import subprocess as _sp
+            from ...utils.ffmpeg_util import _ffprobe_bin
+            r = _sp.run(
+                [
+                    _ffprobe_bin(), "-v", "error",
+                    "-select_streams", "v:0",
+                    "-show_entries", "stream=codec_name",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    str(final_video),
+                ],
+                capture_output=True, text=True, timeout=5,
+            )
+            video_codec = (r.stdout or "").strip().lower()
+            # 浏览器 <video> 原生支持：h264 / hevc(有限) / av1(新) / vp8 / vp9
+            browser_compatible = video_codec in ("h264", "hevc", "av1", "vp8", "vp9")
+            if not browser_compatible:
+                logger.warning(
+                    f"⚠️ 产出视频 codec={video_codec} 不被浏览器 <video> 原生支持！"
+                    f"用户在前端播放会黑屏。请在服务器安装带 libx264 的 ffmpeg。"
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"probe video codec failed: {e}")
+
         return {
             "video_path": str(final_video),
             "video_url": video_url,
+            "video_codec": video_codec,
+            "browser_compatible": browser_compatible,
             "duration": probe_duration(final_video),
             "shots": len(shots),
             "characters": len(characters),

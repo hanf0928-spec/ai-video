@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import functools
+import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Iterable
@@ -11,11 +13,50 @@ from ..core.exceptions import AppError
 from ..core.logger import logger
 
 
-# 编码器优先级：libx264 质量最高 → libopenh264 开源替代 → mpeg4 系统自带兜底
+# 编码器优先级：libx264 质量最高、浏览器兼容 → libopenh264 开源替代（浏览器 OK）
+#              → h264_nvenc / h264_v4l2m2m 硬件 → mpeg4 系统自带但浏览器不认
 # 大多数发行版（含 OpenCloudOS）默认 ffmpeg 不含 libx264（专利/许可问题），
-# 需要通过 RPMFusion / 自编译才能启用。无 libx264 时自动降级到 openh264 或 mpeg4。
+# 需要通过 RPMFusion / 自编译 / 静态二进制 / conda-forge 才能启用。
 _H264_CANDIDATES = ["libx264", "libopenh264", "h264_nvenc", "h264_v4l2m2m"]
-_FALLBACK_CODEC = "mpeg4"  # 100% 系统自带，但不是 H.264
+_FALLBACK_CODEC = "mpeg4"  # 100% 系统自带，但是浏览器 <video> 不认，播放会黑屏！
+
+
+@functools.lru_cache(maxsize=1)
+def _ffmpeg_bin() -> str:
+    """定位 ffmpeg 可执行文件。
+
+    优先级：
+      1. 环境变量 FFMPEG_BIN（允许用户指定静态二进制路径）
+      2. /usr/local/bin/ffmpeg（约定俗成的手动安装位置）
+      3. PATH 下的 ffmpeg
+    """
+    env_bin = os.environ.get("FFMPEG_BIN")
+    if env_bin and Path(env_bin).is_file():
+        logger.info(f"ffmpeg: 使用 FFMPEG_BIN={env_bin}")
+        return env_bin
+    local_bin = "/usr/local/bin/ffmpeg"
+    if Path(local_bin).is_file():
+        logger.info(f"ffmpeg: 使用 {local_bin}")
+        return local_bin
+    which = shutil.which("ffmpeg")
+    if which:
+        return which
+    # 最后保底：假定 PATH 里有，调用时 subprocess 会报错
+    return "ffmpeg"
+
+
+@functools.lru_cache(maxsize=1)
+def _ffprobe_bin() -> str:
+    env_bin = os.environ.get("FFPROBE_BIN")
+    if env_bin and Path(env_bin).is_file():
+        return env_bin
+    local_bin = "/usr/local/bin/ffprobe"
+    if Path(local_bin).is_file():
+        return local_bin
+    which = shutil.which("ffprobe")
+    if which:
+        return which
+    return "ffprobe"
 
 
 @functools.lru_cache(maxsize=1)
@@ -23,7 +64,7 @@ def _available_encoders() -> set[str]:
     """探测当前 ffmpeg 支持的视频编码器集合（缓存一次）。"""
     try:
         r = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],
+            [_ffmpeg_bin(), "-hide_banner", "-encoders"],
             capture_output=True, text=True, timeout=5,
         )
         if r.returncode != 0:
@@ -45,7 +86,7 @@ def _pick_video_codec() -> str:
     """按优先级挑一个当前 ffmpeg 可用的视频编码器。"""
     available = _available_encoders()
     if not available:
-        logger.warning("ffmpeg 探测失败，默认尝试 libx264（若报错请安装 ffmpeg-full / RPMFusion ffmpeg）")
+        logger.warning("ffmpeg 探测失败，默认尝试 libx264（若报错请安装带 libx264 的 ffmpeg）")
         return "libx264"
     for c in _H264_CANDIDATES:
         if c in available:
@@ -53,12 +94,19 @@ def _pick_video_codec() -> str:
                 logger.info(f"ffmpeg 未检测到 libx264，自动使用 {c}")
             return c
     logger.warning(
-        f"ffmpeg 不支持任何 H.264 编码器，降级到 {_FALLBACK_CODEC}（兼容性差，建议安装 RPMFusion ffmpeg）"
+        f"⚠️ ffmpeg 不支持任何 H.264 编码器！降级到 {_FALLBACK_CODEC}。"
+        f"注意：mpeg4 容器虽为 .mp4，但浏览器 <video> 不认，前端会黑屏！"
+        f"强烈建议安装带 libx264 的 ffmpeg（见部署文档）"
     )
     return _FALLBACK_CODEC
 
 
 def _run(cmd: list[str]) -> None:
+    # 替换首个 "ffmpeg" 为真实路径
+    if cmd and cmd[0] == "ffmpeg":
+        cmd = [_ffmpeg_bin(), *cmd[1:]]
+    elif cmd and cmd[0] == "ffprobe":
+        cmd = [_ffprobe_bin(), *cmd[1:]]
     logger.debug("ffmpeg: " + " ".join(cmd))
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
@@ -83,6 +131,9 @@ def _run_with_codec_fallback(build_cmd, label: str) -> None:
 
     for codec in seq:
         cmd = build_cmd(codec)
+        # 替换 cmd[0] 为真实 ffmpeg 可执行路径（支持 FFMPEG_BIN 环境变量）
+        if cmd and cmd[0] == "ffmpeg":
+            cmd = [_ffmpeg_bin(), *cmd[1:]]
         logger.debug(f"ffmpeg[{label}] codec={codec}: {' '.join(cmd)}")
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode == 0:
@@ -113,7 +164,7 @@ def _run_with_codec_fallback(build_cmd, label: str) -> None:
 def probe_duration(path: str | Path) -> float:
     r = subprocess.run(
         [
-            "ffprobe", "-v", "error",
+            _ffprobe_bin(), "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
             str(path),
@@ -170,7 +221,7 @@ def _has_audio_stream(path: str | Path) -> bool:
     """Return True if the given media file has at least one audio stream."""
     r = subprocess.run(
         [
-            "ffprobe", "-v", "error",
+            _ffprobe_bin(), "-v", "error",
             "-select_streams", "a",
             "-show_entries", "stream=index",
             "-of", "csv=p=0",
