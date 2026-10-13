@@ -46,6 +46,7 @@ export const uploadManga = (projectId: string, file: File) => {
 }
 export const listUploads = (projectId: string) => http.get(`/manga/uploads/${projectId}`).then((r) => r.data)
 export const convertManga = (data: any) => http.post('/manga/convert', data).then((r) => r.data)
+export const analyzeManga = (data: any) => http.post('/manga/analyze', data).then((r) => r.data)
 
 // ---------- Generate ----------
 export const generateScript = (data: any) => http.post('/generate/script', data).then((r) => r.data)

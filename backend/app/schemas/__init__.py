@@ -216,6 +216,15 @@ class Manga2AnimeRequest(BaseModel):
     )
 
 
+class MangaAnalyzeRequest(BaseModel):
+    """漫画深度剖析请求：拆解为角色/剧本/分镜（时刻、衣着、动作、神态、环境）。不生成视频。"""
+    project_id: str
+    upload_id: str
+    style: Optional[str] = Field(None, description="目标动画风格，如 日系动画/美式卡通/水彩等")
+    extra_hint: Optional[str] = Field(None, description="额外提示：告诉 LLM 你想重点关注的方面")
+    shot_duration: float = Field(4.0, description="每个分镜的默认时长（秒），用于计算 timecode")
+
+
 class GenerateShotRequest(BaseModel):
     shot_id: str
     backend: Literal["hailuo", "seedance", "comfyui"] = "hailuo"

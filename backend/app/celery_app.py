@@ -104,3 +104,38 @@ def task_render_episode(self, job_id: str, episode_id: str, params: dict):
         logger.exception(f"render_episode job {job_id} failed")
         _update_job(job_id, status="failed", message=str(e))
         raise
+
+
+@celery_app.task(bind=True, name="task.manga_analyze")
+def task_manga_analyze(self, job_id: str, upload_id: str, project_id: str, params: dict):
+    """漫画深度剖析任务：角色 / 剧本 / 分镜（时刻/衣着/动作/神态/环境）。"""
+    from .pipelines.manga_analyze import MangaAnalyzePipeline
+
+    _update_job(job_id, status="running", stage="start", progress=0.0)
+
+    def on_progress(stage: str, progress: float, msg: str) -> None:
+        _update_job(job_id, stage=stage, progress=progress, message=msg)
+
+    try:
+        with SessionLocal() as db:
+            upload = db.get(MangaUpload, upload_id)
+            if not upload:
+                raise RuntimeError(f"upload not found: {upload_id}")
+            upload_path = upload.file_path
+
+        pipeline = MangaAnalyzePipeline(
+            upload_path=upload_path,
+            project_id=project_id,
+            style=params.get("style"),
+            extra_hint=params.get("extra_hint"),
+            shot_duration=params.get("shot_duration", 4.0),
+            on_progress=on_progress,
+        )
+
+        result = asyncio.run(pipeline.run())
+        _update_job(job_id, status="success", progress=1.0, stage="done", result=result)
+        return result
+    except Exception as e:
+        logger.exception(f"manga_analyze job {job_id} failed")
+        _update_job(job_id, status="failed", message=str(e))
+        raise

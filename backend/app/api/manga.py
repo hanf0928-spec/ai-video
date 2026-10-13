@@ -8,11 +8,17 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from ..celery_app import task_manga2anime
+from ..celery_app import task_manga2anime, task_manga_analyze
 from ..core.config import settings
 from ..db import get_db
 from ..models.orm import Job, MangaUpload, Project
-from ..schemas import Manga2AnimeRequest, MangaUploadOut, JobOut, ResponseModel
+from ..schemas import (
+    Manga2AnimeRequest,
+    MangaAnalyzeRequest,
+    MangaUploadOut,
+    JobOut,
+    ResponseModel,
+)
 
 
 router = APIRouter(prefix="/manga", tags=["manga"])
@@ -73,6 +79,29 @@ def convert_manga(body: Manga2AnimeRequest, db: Session = Depends(get_db)):
     db.add(job); db.commit(); db.refresh(job)
 
     async_result = task_manga2anime.delay(
+        job.id, body.upload_id, body.project_id, body.model_dump()
+    )
+    job.celery_task_id = async_result.id
+    db.add(job); db.commit(); db.refresh(job)
+    return job
+
+
+@router.post("/analyze", response_model=JobOut)
+def analyze_manga(body: MangaAnalyzeRequest, db: Session = Depends(get_db)):
+    """漫画深度剖析（拆解角色 / 剧本 / 分镜细节），不生成视频，仅输出结构化 JSON 报告。"""
+    upload = db.get(MangaUpload, body.upload_id)
+    if not upload or upload.project_id != body.project_id:
+        raise HTTPException(404, "upload not found")
+
+    job = Job(
+        type="manga_analyze",
+        project_id=body.project_id,
+        status="pending",
+        payload=body.model_dump(),
+    )
+    db.add(job); db.commit(); db.refresh(job)
+
+    async_result = task_manga_analyze.delay(
         job.id, body.upload_id, body.project_id, body.model_dump()
     )
     job.celery_task_id = async_result.id

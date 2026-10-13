@@ -3,11 +3,13 @@ import { Layout, Menu } from 'antd'
 import {
   AppstoreOutlined, FileImageOutlined, PictureOutlined,
   TeamOutlined, SettingOutlined, PlaySquareOutlined, ApiOutlined,
+  FileSearchOutlined,
 } from '@ant-design/icons'
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
 import ProjectsPage from './pages/ProjectsPage'
 import ProjectDetailPage from './pages/ProjectDetailPage'
 import Manga2AnimePage from './pages/Manga2AnimePage'
+import MangaAnalyzePage from './pages/MangaAnalyzePage'
 import StoryboardPage from './pages/StoryboardPage'
 import CharactersPage from './pages/CharactersPage'
 import JobsPage from './pages/JobsPage'
@@ -22,6 +24,7 @@ export default function App() {
 
   const selectedKey =
     loc.pathname.startsWith('/manga2anime') ? 'm2a' :
+    loc.pathname.startsWith('/manga-analyze') ? 'ma' :
     loc.pathname.startsWith('/storyboard') ? 'sb' :
     loc.pathname.startsWith('/characters') ? 'ch' :
     loc.pathname.startsWith('/jobs') ? 'jb' :
@@ -38,7 +41,7 @@ export default function App() {
           selectedKeys={[selectedKey]}
           onClick={(e) => {
             const map: any = {
-              pj: '/projects', m2a: '/manga2anime', sb: '/storyboard',
+              pj: '/projects', m2a: '/manga2anime', ma: '/manga-analyze', sb: '/storyboard',
               ch: '/characters', jb: '/jobs', mc: '/models', st: '/settings',
             }
             nav(map[e.key])
@@ -46,6 +49,7 @@ export default function App() {
           items={[
             { key: 'pj', icon: <AppstoreOutlined />, label: '项目' },
             { key: 'm2a', icon: <FileImageOutlined />, label: '漫画转漫剧' },
+            { key: 'ma', icon: <FileSearchOutlined />, label: '漫画拆解' },
             { key: 'sb', icon: <PictureOutlined />, label: '分镜工作台' },
             { key: 'ch', icon: <TeamOutlined />, label: '角色与场景' },
             { key: 'jb', icon: <PlaySquareOutlined />, label: '任务队列' },
@@ -62,6 +66,7 @@ export default function App() {
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:id" element={<ProjectDetailPage />} />
             <Route path="/manga2anime" element={<Manga2AnimePage />} />
+            <Route path="/manga-analyze" element={<MangaAnalyzePage />} />
             <Route path="/storyboard" element={<StoryboardPage />} />
             <Route path="/storyboard/:episodeId" element={<StoryboardPage />} />
             <Route path="/characters" element={<CharactersPage />} />

@@ -64,6 +64,7 @@ export default function JobsPage() {
           {
             title: '类型', dataIndex: 'type',
             render: (t) => t === 'manga2anime' ? <Tag color="purple">漫画转漫剧</Tag>
+                        : t === 'manga_analyze' ? <Tag color="cyan">漫画拆解</Tag>
                         : t === 'episode_render' ? <Tag color="blue">剧集渲染</Tag>
                         : <Tag>{t}</Tag>,
           },

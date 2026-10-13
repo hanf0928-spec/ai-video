@@ -49,6 +49,79 @@ SYSTEM_PANEL2SHOT_PROMPT = """\
 """
 
 
+SYSTEM_PANEL_ANALYZE_PROMPT = """\
+你是一名资深漫剧改编制片人与分镜师，擅长将漫画拆解为可执行的影视化方案。
+下面会给你一批漫画分格（panel）的 OCR 文字和阅读顺序，请深度剖析并输出一个严格的 JSON，结构如下：
+
+{
+  "title": "作品标题（根据内容猜测，可留空）",
+  "genre": "类型：热血/恋爱/悬疑/日常/科幻/奇幻/恐怖/喜剧/...",
+  "summary": "一句话故事概要（≤80 字）",
+  "tone": "整体氛围/色调风格建议",
+  "bgm_hint": "推荐 BGM 风格",
+  "characters": [
+    {
+      "name": "角色名（没有就用 '少年A'/'少女B'）",
+      "role": "主角/配角/路人",
+      "appearance": "外貌（性别、年龄、身高、发色、瞳色、体型）",
+      "costume": "典型服装（上下装、配饰）",
+      "personality": "性格",
+      "voice_tone": "声线建议（如：少年感、清冷御姐、低沉大叔）",
+      "first_appear_panel": 0
+    }
+  ],
+  "script": {
+    "acts": [
+      {
+        "name": "起/承/转/合 或 自定义段落名",
+        "panels_range": [起始panel索引, 结束panel索引],
+        "summary": "本段剧情概要"
+      }
+    ]
+  },
+  "storyboard": [
+    {
+      "index": 0,
+      "page": 0,
+      "panel_order": 0,
+      "timecode": "00:00:00~00:00:04",
+      "duration": 4,
+      "shot_type": "大特写/特写/近景/中景/全景/远景/大远景",
+      "camera_motion": "固定/推/拉/摇/移/跟/升降/旋转",
+      "environment": {
+        "location": "地点",
+        "time_of_day": "清晨/白天/黄昏/夜晚",
+        "weather": "晴/阴/雨/雪/未知",
+        "lighting": "自然光/逆光/侧光/舞台光/...",
+        "details": "环境细节（道具、背景、氛围线索）"
+      },
+      "characters_in_shot": [
+        {
+          "name": "角色名",
+          "costume": "本镜头服装（如有变化）",
+          "action": "正在做什么动作",
+          "expression": "面部神态",
+          "emotion": "情绪：neutral/happy/sad/angry/surprised/afraid/determined"
+        }
+      ],
+      "dialogue": "台词（可空）",
+      "speaker": "说话人（可空）",
+      "sfx": "音效建议（可空）",
+      "image_prompt": "文生图/图生视频 prompt（英文、尽量具体，可直接喂给 Flux/SDXL/海螺）",
+      "video_prompt": "镜头/动作补充 prompt（描述镜头移动和角色动作）"
+    }
+  ],
+  "notes": "其他给制作团队的提醒（如：主角 A 服装前后一致、第 5 镜用慢动作强调情感）"
+}
+
+严格要求：
+1. storyboard 长度必须等于输入 panels 数量，index 从 0 开始，和 panel_order 一一对应。
+2. 所有字符串用中文（image_prompt / video_prompt 用英文，便于喂给扩散模型）。
+3. environment.time_of_day、expression、emotion、shot_type、camera_motion 必须从枚举中选。
+4. 不要输出任何 Markdown 代码围栏或注释，只输出纯 JSON。
+"""
+
+
 class LLMAdapter:
     def __init__(
         self,
@@ -189,6 +262,45 @@ class LLMAdapter:
         if not shots:
             # 记录完整返回，便于诊断 "empty storyboard"
             logger.warning(f"[LLM] empty shots. raw content (first 500 chars): {content[:500]}")
+        return result
+
+    async def panels_to_analysis(
+        self,
+        panels: list[dict],
+        *,
+        style: Optional[str] = None,
+        extra_hint: Optional[str] = None,
+    ) -> dict:
+        """Deep manga analysis: 角色 + 剧本 + 分镜（时刻/衣着/动作/神态/环境）.
+
+        输入格式与 panels_to_script 相同（panel order + OCR 文字）。
+        输出一个大 JSON，key 包括 characters / script / storyboard / notes 等。
+        """
+        user_payload = {
+            "style": style or "日系动画",
+            "extra_hint": extra_hint or "",
+            "panel_count": len(panels),
+            "panels": panels,
+        }
+        content = await self.chat(
+            [
+                {"role": "system", "content": SYSTEM_PANEL_ANALYZE_PROMPT},
+                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+            ],
+            response_format_json=True,
+        )
+        result = self._safe_parse_json(content)
+        storyboard = result.get("storyboard") or []
+        characters = result.get("characters") or []
+        logger.info(
+            f"[LLM] panels_to_analysis done: input_panels={len(panels)}, "
+            f"storyboard={len(storyboard)}, characters={len(characters)}, "
+            f"keys={list(result.keys())}"
+        )
+        if not storyboard:
+            logger.warning(
+                f"[LLM] empty storyboard in analysis. raw (first 500): {content[:500]}"
+            )
         return result
 
     @staticmethod
