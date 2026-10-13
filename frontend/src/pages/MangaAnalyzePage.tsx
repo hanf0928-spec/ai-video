@@ -312,7 +312,16 @@ function AnalysisResult({ report }: { report: Report }) {
           showIcon
           style={{ marginBottom: 12 }}
           message="LLM 深度剖析未成功，当前为简化兜底版本"
-          description="请检查「🔧 模型配置 → 🧠 LLM」API Key，并建议使用非 reasoning 模型（如 deepseek-chat-v3 / gpt-4o-mini / qwen3-30b-instruct）"
+          description={
+            <div>
+              <div>请检查「🔧 模型配置 → 🧠 LLM」API Key，并建议使用非 reasoning 模型（如 deepseek-chat-v3 / gpt-4o-mini / qwen3-30b-instruct）</div>
+              {(report as any)._fallback_reason && (
+                <div style={{ marginTop: 6, color: '#faad14' }}>
+                  <b>错误原因：</b>{(report as any)._fallback_reason}
+                </div>
+              )}
+            </div>
+          }
         />
       )}
       <Tabs

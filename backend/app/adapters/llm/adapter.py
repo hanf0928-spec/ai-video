@@ -305,9 +305,20 @@ class LLMAdapter:
 
     @staticmethod
     def _safe_parse_json(text: str) -> dict:
-        """Parse LLM output into dict, tolerating markdown fences / prefixes / suffixes."""
+        """Parse LLM output into dict, tolerating markdown fences / prefixes / suffixes
+        / unescaped control characters inside string values.
+
+        健壮性策略（按顺序尝试）：
+          1) 去 markdown 代码围栏
+          2) 截取首个 `{` 到末尾 `}` 之间的内容
+          3) 严格 json.loads
+          4) strict=False 容忍字符串里的 \\n \\t 等真实控制字符
+          5) 用正则定位字符串字面量，把其中的真实控制字符替换成转义形式后再 parse
+          6) 全部失败才抛 AdapterError
+        """
         import re
 
+        raw_input = text
         text = (text or "").strip()
         if not text:
             logger.warning("[LLM] _safe_parse_json received empty text")
@@ -325,8 +336,85 @@ class LLMAdapter:
             if lb != -1 and rb != -1 and rb > lb:
                 text = text[lb : rb + 1]
 
+        # 3) 严格 parse
         try:
             return json.loads(text)
-        except json.JSONDecodeError as e:
-            logger.error(f"LLM returned non-JSON: {text[:300]}")
-            raise AdapterError(f"LLM returned invalid JSON: {e}") from e
+        except json.JSONDecodeError as e_strict:
+            first_err = e_strict
+
+        # 4) 容忍字符串里的真实控制字符（\n \t \r 等）
+        try:
+            return json.loads(text, strict=False)
+        except json.JSONDecodeError:
+            pass
+
+        # 5) 深度清洗：把 "..."  字符串字面量内的裸控制字符替换成合法转义
+        try:
+            cleaned = _escape_ctrl_inside_strings(text)
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        # 6) 再退一步：把全文的 \r\n \t 全替换掉再 strict=False 尝试一次
+        try:
+            fallback = (
+                text.replace("\r\n", "\\n")
+                    .replace("\r", "\\n")
+                    .replace("\n", "\\n")
+                    .replace("\t", "\\t")
+            )
+            return json.loads(fallback, strict=False)
+        except json.JSONDecodeError:
+            pass
+
+        logger.error(f"LLM returned non-JSON (first 500): {text[:500]}")
+        logger.error(f"LLM raw (first 300): {raw_input[:300] if raw_input else ''}")
+        raise AdapterError(f"LLM returned invalid JSON: {first_err}") from first_err
+
+
+def _escape_ctrl_inside_strings(s: str) -> str:
+    """Walk through the JSON text and inside every "..." literal, escape raw
+    control chars (<= 0x1F) to their JSON escaped form.
+
+    这是针对 "LLM 在字符串值里直接写了真实换行" 场景的硬核修复。
+    外部结构字符保持不变，只处理双引号包裹的字符串字面量内部。
+    """
+    out: list[str] = []
+    in_str = False
+    escape = False
+    for ch in s:
+        if in_str:
+            if escape:
+                out.append(ch)
+                escape = False
+                continue
+            if ch == "\\":
+                out.append(ch)
+                escape = True
+                continue
+            if ch == '"':
+                out.append(ch)
+                in_str = False
+                continue
+            code = ord(ch)
+            if code <= 0x1F:
+                # 常见控制字符走标准转义，其它用 \uXXXX
+                if ch == "\n":
+                    out.append("\\n")
+                elif ch == "\r":
+                    out.append("\\r")
+                elif ch == "\t":
+                    out.append("\\t")
+                elif ch == "\b":
+                    out.append("\\b")
+                elif ch == "\f":
+                    out.append("\\f")
+                else:
+                    out.append(f"\\u{code:04x}")
+                continue
+            out.append(ch)
+        else:
+            if ch == '"':
+                in_str = True
+            out.append(ch)
+    return "".join(out)

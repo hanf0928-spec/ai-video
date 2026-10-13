@@ -127,8 +127,19 @@ class MangaAnalyzePipeline:
                 extra_hint=self.extra_hint,
             )
         except Exception as e:  # noqa: BLE001
-            logger.exception("LLM analysis failed")
-            raise PipelineError(f"LLM 深度剖析失败：{type(e).__name__}: {e}") from e
+            # 深度剖析失败不直接 fail 整个任务，而是降级为简版 storyboard，
+            # 让用户至少能拿到基础分镜列表，并在报告里明确标注原因。
+            logger.exception("LLM analysis failed, fallback to minimal storyboard")
+            report = {
+                "title": "",
+                "summary": "",
+                "characters": [],
+                "script": {"acts": []},
+                "storyboard": [],
+                "notes": "",
+                "_fallback": True,
+                "_fallback_reason": f"{type(e).__name__}: {e}",
+            }
 
         storyboard = report.get("storyboard") or []
         if not storyboard:
