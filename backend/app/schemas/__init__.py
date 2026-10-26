@@ -188,6 +188,7 @@ class JobOut(BaseModel):
     id: str
     type: str
     status: str
+    cancelled: bool = False
     progress: float
     stage: Optional[str]
     message: Optional[str]

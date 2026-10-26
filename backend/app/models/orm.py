@@ -158,7 +158,8 @@ class Job(Base):
     project_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     episode_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     celery_task_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    status: Mapped[str] = mapped_column(String(32), default="pending")  # pending/running/success/failed
+    status: Mapped[str] = mapped_column(String(32), default="pending")  # pending/running/success/failed/cancelled
+    cancelled: Mapped[bool] = mapped_column(Boolean, default=False)  # 用户请求停止
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     stage: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

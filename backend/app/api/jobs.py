@@ -10,8 +10,9 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
+from ..core.logger import logger
 from ..db import SessionLocal, get_db
-from ..models.orm import Job
+from ..models.orm import Job, Episode
 from ..schemas import JobOut
 
 
@@ -63,6 +64,48 @@ def get_job(job_id: str, db: Session = Depends(get_db)):
     return j
 
 
+@router.post("/{job_id}/stop", response_model=JobOut)
+def stop_job(job_id: str, db: Session = Depends(get_db)):
+    """停止（取消）一个正在运行/等待中的任务。
+
+    - 标记 Job.cancelled = True（pipeline 在下个进度检查点检测到后干净退出）
+    - 同时向 Celery 发送 revoke(terminate=True) 立即终止 worker 进程
+    - 若是剧集渲染任务，回滚 Episode.status 为 pending
+    """
+    from ..celery_app import celery_app
+
+    j = db.get(Job, job_id)
+    if not j:
+        raise HTTPException(404, "job not found")
+    if j.status in ("success", "failed", "cancelled"):
+        raise HTTPException(409, f"任务已结束（{j.status}），无法停止")
+
+    # 1. 标记取消标志（pipeline 轮询检测）
+    j.cancelled = True
+    j.message = "正在停止…"
+    db.add(j)
+
+    # 2. 回滚关联剧集状态（如有）
+    if j.episode_id:
+        ep = db.get(Episode, j.episode_id)
+        if ep and ep.status == "generating":
+            ep.status = "pending"
+            db.add(ep)
+
+    db.commit()
+    db.refresh(j)
+
+    # 3. 终止 celery worker 上的实际进程（best-effort）
+    if j.celery_task_id:
+        try:
+            celery_app.control.revoke(j.celery_task_id, terminate=True, signal="SIGTERM")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"revoke celery task {j.celery_task_id} failed: {e}")
+
+    _ensure_video_url(j)
+    return j
+
+
 @router.websocket("/ws/{job_id}")
 async def job_progress_ws(ws: WebSocket, job_id: str):
     """Push real-time progress for a job."""
@@ -87,7 +130,7 @@ async def job_progress_ws(ws: WebSocket, job_id: str):
             if snap != last:
                 await ws.send_text(json.dumps(snap, ensure_ascii=False))
                 last = snap
-            if snap["status"] in ("success", "failed"):
+            if snap["status"] in ("success", "failed", "cancelled"):
                 await ws.close()
                 return
             await asyncio.sleep(1.0)

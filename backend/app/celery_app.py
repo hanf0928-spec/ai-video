@@ -37,6 +37,26 @@ def _update_job(job_id: str, **kwargs) -> None:
         db.commit()
 
 
+def should_cancel(job_id: str) -> bool:
+    """检查任务是否被用户取消（读取 Job.cancelled 标志）。"""
+    try:
+        with SessionLocal() as db:
+            job = db.get(Job, job_id)
+            return bool(job and job.cancelled)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+class CancelledError(RuntimeError):
+    """任务被用户取消时抛出，由 task 包装器捕获。"""
+
+
+def _check_cancel(job_id: str) -> None:
+    """在进度检查点调用：若已取消则抛出 CancelledError。"""
+    if should_cancel(job_id):
+        raise CancelledError(f"job {job_id} cancelled by user")
+
+
 @celery_app.task(bind=True, name="task.manga2anime")
 def task_manga2anime(self, job_id: str, upload_id: str, project_id: str, params: dict):
     """Full manga -> anime job."""
@@ -45,6 +65,7 @@ def task_manga2anime(self, job_id: str, upload_id: str, project_id: str, params:
     _update_job(job_id, status="running", stage="start", progress=0.0)
 
     def on_progress(stage: str, progress: float, msg: str) -> None:
+        _check_cancel(job_id)
         _update_job(job_id, stage=stage, progress=progress, message=msg)
 
     try:
@@ -71,6 +92,9 @@ def task_manga2anime(self, job_id: str, upload_id: str, project_id: str, params:
         result = asyncio.run(pipeline.run())
         _update_job(job_id, status="success", progress=1.0, stage="done", result=result)
         return result
+    except CancelledError:
+        logger.info(f"manga2anime job {job_id} cancelled by user")
+        _update_job(job_id, status="cancelled", stage="cancelled", message="用户已取消")
     except Exception as e:
         logger.exception(f"manga2anime job {job_id} failed")
         _update_job(job_id, status="failed", message=str(e))
@@ -84,6 +108,7 @@ def task_render_episode(self, job_id: str, episode_id: str, params: dict):
     _update_job(job_id, status="running", stage="start", progress=0.0)
 
     def on_progress(stage: str, progress: float, msg: str) -> None:
+        _check_cancel(job_id)
         _update_job(job_id, stage=stage, progress=progress, message=msg)
 
     try:
@@ -100,6 +125,9 @@ def task_render_episode(self, job_id: str, episode_id: str, params: dict):
             )
         _update_job(job_id, status="success", progress=1.0, stage="done", result=result)
         return result
+    except CancelledError:
+        logger.info(f"render_episode job {job_id} cancelled by user")
+        _update_job(job_id, status="cancelled", stage="cancelled", message="用户已取消")
     except Exception as e:
         logger.exception(f"render_episode job {job_id} failed")
         _update_job(job_id, status="failed", message=str(e))
@@ -114,6 +142,7 @@ def task_manga_analyze(self, job_id: str, upload_id: str, project_id: str, param
     _update_job(job_id, status="running", stage="start", progress=0.0)
 
     def on_progress(stage: str, progress: float, msg: str) -> None:
+        _check_cancel(job_id)
         _update_job(job_id, stage=stage, progress=progress, message=msg)
 
     try:
@@ -135,6 +164,9 @@ def task_manga_analyze(self, job_id: str, upload_id: str, project_id: str, param
         result = asyncio.run(pipeline.run())
         _update_job(job_id, status="success", progress=1.0, stage="done", result=result)
         return result
+    except CancelledError:
+        logger.info(f"manga_analyze job {job_id} cancelled by user")
+        _update_job(job_id, status="cancelled", stage="cancelled", message="用户已取消")
     except Exception as e:
         logger.exception(f"manga_analyze job {job_id} failed")
         _update_job(job_id, status="failed", message=str(e))

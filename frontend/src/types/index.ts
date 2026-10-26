@@ -40,7 +40,8 @@ export interface Shot {
 export interface Job {
   id: string
   type: string
-  status: 'pending' | 'running' | 'success' | 'failed'
+  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled'
+  cancelled?: boolean
   progress: number
   stage?: string
   message?: string
