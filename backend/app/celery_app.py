@@ -171,3 +171,38 @@ def task_manga_analyze(self, job_id: str, upload_id: str, project_id: str, param
         logger.exception(f"manga_analyze job {job_id} failed")
         _update_job(job_id, status="failed", message=str(e))
         raise
+
+
+@celery_app.task(bind=True, name="task.novel_analyze")
+def task_novel_analyze(self, job_id: str, project_id: str, params: dict):
+    """小说深度剖析：文本 → 角色 / 剧本 / 分镜（时刻/衣着/动作/神态/环境/prompt）。"""
+    from .pipelines.novel_analyze import NovelAnalyzePipeline
+
+    _update_job(job_id, status="running", stage="start", progress=0.0)
+
+    def on_progress(stage: str, progress: float, msg: str) -> None:
+        _check_cancel(job_id)
+        _update_job(job_id, stage=stage, progress=progress, message=msg)
+
+    try:
+        pipeline = NovelAnalyzePipeline(
+            novel_text=params.get("novel_text", ""),
+            project_id=project_id,
+            title_hint=params.get("title_hint"),
+            style=params.get("style"),
+            extra_hint=params.get("extra_hint"),
+            shot_duration=params.get("shot_duration", 4.0),
+            chunk_size=params.get("chunk_size", 2500),
+            on_progress=on_progress,
+        )
+
+        result = asyncio.run(pipeline.run())
+        _update_job(job_id, status="success", progress=1.0, stage="done", result=result)
+        return result
+    except CancelledError:
+        logger.info(f"novel_analyze job {job_id} cancelled by user")
+        _update_job(job_id, status="cancelled", stage="cancelled", message="用户已取消")
+    except Exception as e:
+        logger.exception(f"novel_analyze job {job_id} failed")
+        _update_job(job_id, status="failed", message=str(e))
+        raise

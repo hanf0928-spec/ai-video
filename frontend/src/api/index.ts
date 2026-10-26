@@ -48,6 +48,19 @@ export const listUploads = (projectId: string) => http.get(`/manga/uploads/${pro
 export const convertManga = (data: any) => http.post('/manga/convert', data).then((r) => r.data)
 export const analyzeManga = (data: any) => http.post('/manga/analyze', data).then((r) => r.data)
 
+// ---------- Novel ----------
+export const uploadNovel = (projectId: string, file: File) => {
+  const fd = new FormData()
+  fd.append('project_id', projectId)
+  fd.append('file', file)
+  return http.post('/novel/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data)
+}
+export const listNovelUploads = (projectId: string) =>
+  http.get(`/novel/uploads/${projectId}`).then((r) => r.data)
+export const analyzeNovel = (data: any) => http.post('/novel/analyze', data).then((r) => r.data)
+export const deleteNovelUpload = (uploadId: string) =>
+  http.delete(`/novel/uploads/${uploadId}`).then((r) => r.data)
+
 // ---------- Generate ----------
 export const generateScript = (data: any) => http.post('/generate/script', data).then((r) => r.data)
 export const generateShot = (data: any) => http.post('/generate/shot', data).then((r) => r.data)

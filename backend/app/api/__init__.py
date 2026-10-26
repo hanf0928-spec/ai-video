@@ -2,7 +2,7 @@
 """API router aggregation."""
 from fastapi import APIRouter
 
-from . import projects, episodes, library, manga, generate, jobs, comfy, config
+from . import projects, episodes, library, manga, novel, generate, jobs, comfy, config
 
 
 api_router = APIRouter(prefix="/api")
@@ -10,6 +10,7 @@ api_router.include_router(projects.router)
 api_router.include_router(episodes.router)
 api_router.include_router(library.router)
 api_router.include_router(manga.router)
+api_router.include_router(novel.router)
 api_router.include_router(generate.router)
 api_router.include_router(jobs.router)
 api_router.include_router(comfy.router)

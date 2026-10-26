@@ -20,7 +20,7 @@ function pickVideoUrl(job: Job): string {
  *  有 storyboard / characters / script 中任一字段，即视为有效报告。
  */
 function hasAnalysisReport(job: Job): boolean {
-  if (job.type !== 'manga_analyze') return false
+  if (job.type !== 'manga_analyze' && job.type !== 'novel_analyze') return false
   const r: any = job.result || {}
   return !!(r.storyboard || r.characters || r.script)
 }
@@ -99,6 +99,7 @@ export default function JobsPage() {
             title: '类型', dataIndex: 'type',
             render: (t) => t === 'manga2anime' ? <Tag color="purple">漫画转漫剧</Tag>
                         : t === 'manga_analyze' ? <Tag color="cyan">漫画拆解</Tag>
+                        : t === 'novel_analyze' ? <Tag color="geekblue">小说拆解</Tag>
                         : t === 'episode_render' ? <Tag color="blue">剧集渲染</Tag>
                         : <Tag>{t}</Tag>,
           },
@@ -138,7 +139,7 @@ export default function JobsPage() {
             render: (_, job) => {
               const videoUrl = pickVideoUrl(job)
               const isVideoType = job.type === 'manga2anime' || job.type === 'episode_render'
-              const isAnalyzeType = job.type === 'manga_analyze'
+              const isAnalyzeType = job.type === 'manga_analyze' || job.type === 'novel_analyze'
               const canPlay = job.status === 'success' && !!videoUrl && isVideoType
               const canReport = job.status === 'success' && isAnalyzeType && hasAnalysisReport(job)
               const canStop = job.status === 'pending' || job.status === 'running'

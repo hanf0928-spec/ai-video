@@ -226,6 +226,23 @@ class MangaAnalyzeRequest(BaseModel):
     shot_duration: float = Field(4.0, description="每个分镜的默认时长（秒），用于计算 timecode")
 
 
+class NovelAnalyzeRequest(BaseModel):
+    """小说深度拆解请求：文本 → 角色/剧本/分镜，不生成视频。
+
+    `novel_text` 直接传整段文本，或者先用 /novel/upload 上传后用 `upload_id` 索引。
+    """
+    project_id: str
+    novel_text: Optional[str] = Field(None, description="小说原文（直接粘贴，与 upload_id 二选一）")
+    upload_id: Optional[str] = Field(None, description="/novel/upload 返回的 upload_id（与 novel_text 二选一）")
+    title_hint: Optional[str] = Field(None, description="作品标题提示（可空，LLM 可根据内容再生成）")
+    style: Optional[str] = Field(None, description="目标动画风格")
+    extra_hint: Optional[str] = Field(None, description="额外提示：告诉 LLM 你想重点关注的方面")
+    shot_duration: float = Field(4.0, description="每个分镜的默认时长（秒）")
+    chunk_size: int = Field(2500, description="单次送 LLM 的文本块大小（字符），长小说会被切成多块")
+
+
+
+
 class GenerateShotRequest(BaseModel):
     shot_id: str
     backend: Literal["hailuo", "seedance", "comfyui"] = "hailuo"
