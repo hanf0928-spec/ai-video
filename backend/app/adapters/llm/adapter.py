@@ -1,4 +1,3 @@
-
 """LLM adapter for storyboard/script generation.
 
 Supports OpenAI-compatible endpoints (OpenAI / Doubao / Qwen / DeepSeek /...).
@@ -426,15 +425,18 @@ class LLMAdapter:
     @staticmethod
     def _safe_parse_json(text: str) -> dict:
         """Parse LLM output into dict, tolerating markdown fences / prefixes / suffixes
-        / unescaped control characters inside string values.
+        / unescaped control characters inside string values / single-quote JSON /
+        bare keys / // or /*...*/ comments / trailing commas.
 
-        健壮性策略（按顺序尝试）：
+        健壮性策略（按顺序尝试，任一成功即返回）：
           1) 去 markdown 代码围栏
-          2) 截取首个 `{` 到末尾 `}` 之间的内容
+          2) 截取首个 `{` 到 **括号平衡的** `}` 之间的内容（LLM 常在 JSON 后追加解释）
           3) 严格 json.loads
           4) strict=False 容忍字符串里的 \\n \\t 等真实控制字符
-          5) 用正则定位字符串字面量，把其中的真实控制字符替换成转义形式后再 parse
-          6) 全部失败才抛 AdapterError
+          5) 把字符串字面量内的裸控制字符替换成合法转义后 parse
+          6) 结构性修复：去注释 / 单引号转双引号 / 裸 key 加引号 / 去尾逗号
+          7) 第 5 步 + 第 6 步叠加
+          8) 全部失败才抛 AdapterError
         """
         import re
 
@@ -449,12 +451,13 @@ class LLMAdapter:
         if fence:
             text = fence.group(1).strip()
 
-        # 2) 常见 LLM 在 JSON 前后加前言/说明，截取第一个 { 到最后一个 }
+        # 2) 常见 LLM 在 JSON 前后加前言/说明，先定位第一个 '{'，再做
+        #    **括号平衡扫描**，忽略字符串字面量里的 '{' '}'，找到真正的闭合 '}'。
         if not text.startswith("{"):
             lb = text.find("{")
-            rb = text.rfind("}")
-            if lb != -1 and rb != -1 and rb > lb:
-                text = text[lb : rb + 1]
+            if lb != -1:
+                text = text[lb:]
+        text = _truncate_to_balanced_object(text)
 
         # 3) 严格 parse
         try:
@@ -470,12 +473,30 @@ class LLMAdapter:
 
         # 5) 深度清洗：把 "..."  字符串字面量内的裸控制字符替换成合法转义
         try:
-            cleaned = _escape_ctrl_inside_strings(text)
-            return json.loads(cleaned)
+            cleaned_ctrl = _escape_ctrl_inside_strings(text)
+            return json.loads(cleaned_ctrl)
+        except json.JSONDecodeError:
+            cleaned_ctrl = text  # 后续叠加修复用
+
+        # 6) 结构性修复：
+        #    6a) 去 // 单行注释 和 /* ... */ 块注释
+        #    6b) 单引号包裹的字符串 -> 双引号
+        #    6c) 裸 key（{key: 或 ,key:）-> "key":
+        #    6d) 去 `}` 和 `]` 前的尾随逗号
+        try:
+            cleaned_struct = _repair_json_structure(text)
+            return json.loads(cleaned_struct, strict=False)
         except json.JSONDecodeError:
             pass
 
-        # 6) 再退一步：把全文的 \r\n \t 全替换掉再 strict=False 尝试一次
+        # 7) 第 5 + 6 步叠加（既有结构问题也有控制字符）
+        try:
+            doubly = _escape_ctrl_inside_strings(_repair_json_structure(text))
+            return json.loads(doubly)
+        except json.JSONDecodeError:
+            pass
+
+        # 8) 最后兜底：粗暴替换 \r\n \t 并 strict=False
         try:
             fallback = (
                 text.replace("\r\n", "\\n")
@@ -538,3 +559,145 @@ def _escape_ctrl_inside_strings(s: str) -> str:
                 in_str = True
             out.append(ch)
     return "".join(out)
+
+
+def _truncate_to_balanced_object(s: str) -> str:
+    """从首个 '{' 扫描到括号平衡的 '}'，忽略字符串字面量里的括号。
+
+    专治：LLM 在合法 JSON 之后又追加 "以上就是..." 等解释文字，导致之前的
+    `rfind('}')` 错误地包含了说明文字（里面可能有括号/颜文字），json.loads 报错。
+    """
+    if not s.startswith("{"):
+        return s
+    depth = 0
+    in_str = False
+    escape = False
+    for i, ch in enumerate(s):
+        if in_str:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return s[: i + 1]
+    # 没找到平衡闭合，退回原文让后续兜底继续尝试
+    return s
+
+
+def _repair_json_structure(s: str) -> str:
+    """结构性修复 LLM 常见的非法 JSON：
+
+      - 去 // 单行注释
+      - 去 /* ... */ 块注释
+      - 把 'xxx'  形式的字符串字面量 (单引号) 转成 "xxx"（仅在字符串字面量外部）
+      - 给裸 key 加双引号：  {foo:  /  ,foo:   ->  {"foo":  /  ,"foo":
+      - 去 '}' / ']' 前的尾随逗号
+
+    严格只在"结构区域"做修改，不碰已经在双引号里的字符串内容。
+    """
+    import re
+
+    # ---------- 第 1 遍：去注释 + 单引号转双引号（结构区域） ----------
+    out: list[str] = []
+    in_dq = False  # 是否在双引号字符串里
+    in_sq = False  # 是否在单引号字符串里（LLM 用单引号写 JSON 时）
+    escape = False
+    i = 0
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        nxt = s[i + 1] if i + 1 < n else ""
+
+        # 处于双引号字符串内：原样复制，直到遇到未转义的 "
+        if in_dq:
+            out.append(ch)
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_dq = False
+            i += 1
+            continue
+
+        # 处于单引号字符串内：把 ' 翻译成 "，内部的 " 要补转义
+        if in_sq:
+            if escape:
+                # 保留转义字符
+                out.append(ch)
+                escape = False
+                i += 1
+                continue
+            if ch == "\\":
+                out.append(ch)
+                escape = True
+                i += 1
+                continue
+            if ch == '"':
+                # 单引号字符串里出现了裸双引号 -> 转义掉
+                out.append('\\"')
+                i += 1
+                continue
+            if ch == "'":
+                # 单引号闭合 -> 翻译为 "
+                out.append('"')
+                in_sq = False
+                i += 1
+                continue
+            out.append(ch)
+            i += 1
+            continue
+
+        # 结构区域：
+        # 1) 去 // 行注释
+        if ch == "/" and nxt == "/":
+            j = s.find("\n", i)
+            i = j if j != -1 else n
+            continue
+        # 2) 去 /* ... */ 块注释
+        if ch == "/" and nxt == "*":
+            j = s.find("*/", i + 2)
+            i = (j + 2) if j != -1 else n
+            continue
+        # 3) 双引号起始
+        if ch == '"':
+            in_dq = True
+            out.append(ch)
+            i += 1
+            continue
+        # 4) 单引号起始 -> 翻译为双引号
+        if ch == "'":
+            in_sq = True
+            out.append('"')
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+
+    s2 = "".join(out)
+
+    # ---------- 第 2 遍：裸 key 加引号 ----------
+    # 匹配：{  或  ,  后面跟 identifier 再跟 : （但 identifier 不能已被引号包围）
+    # 这个正则不会误伤字符串字面量里的 ":", 因为那里 identifier 的前一个非空字符不是 { 或 ,
+    s2 = re.sub(
+        r'([{,]\s*)([A-Za-z_][A-Za-z0-9_\-]*)(\s*:)',
+        r'\1"\2"\3',
+        s2,
+    )
+
+    # ---------- 第 3 遍：去尾随逗号  ,\s*}  /  ,\s*] ----------
+    s2 = re.sub(r",(\s*[}\]])", r"\1", s2)
+
+    return s2
