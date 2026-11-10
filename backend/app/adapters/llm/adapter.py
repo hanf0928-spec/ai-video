@@ -210,7 +210,10 @@ class LLMAdapter:
         self.api_key = api_key or cfg.get("api_key") or ""
         self.base_url = (base_url or cfg.get("base_url") or "https://api.openai.com/v1").rstrip("/")
         self.model = model or cfg.get("model") or "gpt-4o"
-        self._client = httpx.AsyncClient(timeout=120.0)
+        # 自托管 / 本地推理（llama.cpp、vLLM 等）常见响应较慢，尤其是大参数量 +
+        # 思考型模型；超时太短会导致连接被客户端掐断，而服务端仍在后台占用推理槠位，
+        # 紧接着的重试反而会立刻拿到 429 busy。读超时放宽到 10 分钟，连接超时保持较短。
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=10.0))
 
     def _headers(self) -> dict:
         if not self.api_key:
@@ -220,7 +223,7 @@ class LLMAdapter:
             "Content-Type": "application/json",
         }
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=5, max=60))
     async def chat(self, messages: list[dict], *, response_format_json: bool = False) -> str:
         """Call OpenAI-compatible chat API.
 
