@@ -1,8 +1,9 @@
 
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Progress, Table, Tag, Typography, Space, Button, Modal, Empty, message, Alert, Descriptions, Tabs } from 'antd'
-import { ReloadOutlined, PlayCircleOutlined, DownloadOutlined, StopOutlined, FileSearchOutlined } from '@ant-design/icons'
-import { listJobs, stopJob } from '../api'
+import { ReloadOutlined, PlayCircleOutlined, DownloadOutlined, StopOutlined, FileSearchOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { listJobs, stopJob, activateJob } from '../api'
 import type { Job } from '../types'
 
 const { Title, Text, Paragraph } = Typography
@@ -26,6 +27,7 @@ function hasAnalysisReport(job: Job): boolean {
 }
 
 export default function JobsPage() {
+  const nav = useNavigate()
   const [list, setList] = useState<Job[]>([])
   const [preview, setPreview] = useState<{ visible: boolean; url: string; title: string; codec: string; compatible: boolean }>({
     visible: false, url: '', title: '', codec: '', compatible: true,
@@ -33,6 +35,7 @@ export default function JobsPage() {
   const [reportJob, setReportJob] = useState<Job | null>(null)
   const [stopTarget, setStopTarget] = useState<Job | null>(null)
   const [stopping, setStopping] = useState(false)
+  const [activatingId, setActivatingId] = useState<string | null>(null)
 
   const load = async () => setList(await listJobs())
   useEffect(() => {
@@ -82,6 +85,31 @@ export default function JobsPage() {
     a.download = name
     document.body.appendChild(a); a.click(); document.body.removeChild(a)
     URL.revokeObjectURL(a.href)
+  }
+
+  const onActivate = async (job: Job) => {
+    setActivatingId(job.id)
+    try {
+      const res = await activateJob(job.id)
+      const d = res?.data || {}
+      message.success(
+        `已启用：新增角色 ${d.characters_created ?? 0} / 场景 ${d.scenes_created ?? 0} / 分镜 ${d.shots_created ?? 0}`,
+      )
+      await load()
+      if (d.episode_id) {
+        Modal.confirm({
+          title: '启用成功',
+          content: '角色/场景已写入「角色与场景」，分镜已写入「分镜工作台」。是否立即前往分镜工作台生成视频片段？',
+          okText: '前往分镜工作台',
+          cancelText: '稍后再说',
+          onOk: () => nav(`/storyboard/${d.episode_id}`),
+        })
+      }
+    } catch (e: any) {
+      message.error(e?.message || '启用失败')
+    } finally {
+      setActivatingId(null)
+    }
   }
 
   return (
@@ -135,7 +163,7 @@ export default function JobsPage() {
             render: (t) => new Date(t).toLocaleTimeString(),
           },
           {
-            title: '操作', key: 'actions', width: 260, fixed: 'right',
+            title: '操作', key: 'actions', width: 340, fixed: 'right',
             render: (_, job) => {
               const videoUrl = pickVideoUrl(job)
               const isVideoType = job.type === 'manga2anime' || job.type === 'episode_render'
@@ -143,6 +171,8 @@ export default function JobsPage() {
               const canPlay = job.status === 'success' && !!videoUrl && isVideoType
               const canReport = job.status === 'success' && isAnalyzeType && hasAnalysisReport(job)
               const canStop = job.status === 'pending' || job.status === 'running'
+              const isActivated = !!(job.result as any)?._activated
+              const activatedEpisodeId = (job.result as any)?._activated_episode_id
 
               return (
                 <Space size="small" wrap>
@@ -195,6 +225,24 @@ export default function JobsPage() {
                       >
                         下载 JSON
                       </Button>
+                      {isActivated ? (
+                        <Button
+                          size="small"
+                          onClick={() => activatedEpisodeId && nav(`/storyboard/${activatedEpisodeId}`)}
+                        >
+                          已启用 · 查看分镜
+                        </Button>
+                      ) : (
+                        <Button
+                          size="small"
+                          icon={<ThunderboltOutlined />}
+                          disabled={!canReport}
+                          loading={activatingId === job.id}
+                          onClick={() => onActivate(job)}
+                        >
+                          启用
+                        </Button>
+                      )}
                     </>
                   )}
 

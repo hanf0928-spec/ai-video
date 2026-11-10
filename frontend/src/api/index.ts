@@ -71,6 +71,7 @@ export const listJobs = (projectId?: string) =>
   http.get('/jobs', { params: projectId ? { project_id: projectId } : {} }).then((r) => r.data)
 export const getJob = (id: string) => http.get(`/jobs/${id}`).then((r) => r.data)
 export const stopJob = (id: string) => http.post(`/jobs/${id}/stop`).then((r) => r.data)
+export const activateJob = (id: string) => http.post(`/jobs/${id}/activate`).then((r) => r.data)
 
 export function openJobWS(jobId: string, onMessage: (data: any) => void): WebSocket {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
