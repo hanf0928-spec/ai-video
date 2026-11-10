@@ -241,6 +241,34 @@ class NovelAnalyzeRequest(BaseModel):
     chunk_size: int = Field(2500, description="单次送 LLM 的文本块大小（字符），长小说会被切成多块")
 
 
+class NovelToVideoRequest(BaseModel):
+    """小说 → 深度剖析 → 海螺03(MiniMax H3) 文生视频，音画同出。
+
+    对白/音效随视频原生生成（显式关闭 remove_audio），不走"先哑剧视频、
+    再用 TTS 事后配音合成"的老路径；适合追求口型/音效同步感的场景。
+    """
+    project_id: str
+    novel_text: Optional[str] = Field(None, description="小说原文（直接粘贴，与 upload_id 二选一）")
+    upload_id: Optional[str] = Field(None, description="/novel/upload 返回的 upload_id（与 novel_text 二选一）")
+    title_hint: Optional[str] = Field(None, description="作品标题提示（可空，LLM 可根据内容再生成）")
+    style: Optional[str] = Field(None, description="目标动画风格")
+    extra_hint: Optional[str] = Field(None, description="额外提示：告诉 LLM 你想重点关注的方面")
+    chunk_size: int = Field(2500, description="单次送 LLM 的文本块大小（字符），长小说会被切成多块")
+    shot_duration: float = Field(5.0, description="每个分镜默认时长（秒），会被 clamp 到海螺03 允许的 4~15s")
+    video_backend: Literal["hailuo", "seedance"] = Field(
+        "hailuo", description="视频生成后端，推荐 hailuo（海螺03/MiniMax H3），原生支持音画同出"
+    )
+    resolution: str = Field("768P", description="海螺03 允许值：480P/720P/768P")
+    aspect_ratio: str = Field("16:9", description="画面比例")
+    enable_bgm: bool = True
+    enable_subtitle: bool = True
+    max_shots: Optional[int] = Field(
+        None, description="安全上限：分镜数超过此值会被截断，避免一次性生成过多视频片段消耗配额"
+    )
+    strict_video: bool = Field(
+        False,
+        description="True 时任一分镜 T2VA 生成失败直接任务失败；False 时降级为占位片段（+可选TTS兜底配音）",
+    )
 
 
 class GenerateShotRequest(BaseModel):

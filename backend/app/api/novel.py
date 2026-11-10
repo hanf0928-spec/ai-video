@@ -6,16 +6,18 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from ..celery_app import task_novel_analyze
+from ..celery_app import task_novel_analyze, task_novel2anime
 from ..core.config import settings
 from ..db import get_db
 from ..models.orm import Job, MangaUpload, Project
 from ..schemas import (
     NovelAnalyzeRequest,
+    NovelToVideoRequest,
     MangaUploadOut,
     JobOut,
     ResponseModel,
@@ -75,23 +77,15 @@ def list_novel_uploads(project_id: str, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/analyze", response_model=JobOut)
-def analyze_novel(body: NovelAnalyzeRequest, db: Session = Depends(get_db)):
-    """小说深度剖析：拆解为角色 / 剧本 / 分镜细节；不生成视频，仅输出 JSON 报告。
-
-    输入两种方式二选一：
-      - `novel_text`：直接传正文（适合短篇 / 粘贴）
-      - `upload_id`：先用 /novel/upload 上传 .txt，再传此 id（适合长篇）
-    """
-    # 1. 校验项目
-    if not db.get(Project, body.project_id):
+def _resolve_novel_text(project_id: str, novel_text: Optional[str], upload_id: Optional[str], db: Session) -> str:
+    """校验项目存在 + 解析正文内容（novel_text 与 upload_id 二选一）。"""
+    if not db.get(Project, project_id):
         raise HTTPException(404, "project not found")
 
-    # 2. 解析正文内容
-    text = (body.novel_text or "").strip()
-    if not text and body.upload_id:
-        upload = db.get(MangaUpload, body.upload_id)
-        if not upload or upload.project_id != body.project_id:
+    text = (novel_text or "").strip()
+    if not text and upload_id:
+        upload = db.get(MangaUpload, upload_id)
+        if not upload or upload.project_id != project_id:
             raise HTTPException(404, "upload not found")
         if upload.file_type != "novel":
             raise HTTPException(400, f"upload 不是小说类型（file_type={upload.file_type}）")
@@ -108,8 +102,20 @@ def analyze_novel(body: NovelAnalyzeRequest, db: Session = Depends(get_db)):
             f"文本过长（{len(text)} 字 > 上限 {MAX_INLINE_TEXT} 字），"
             f"请拆成多次调用，或先 /novel/upload 后传 upload_id",
         )
+    return text
 
-    # 3. 创建 Job + 投递 celery
+
+@router.post("/analyze", response_model=JobOut)
+def analyze_novel(body: NovelAnalyzeRequest, db: Session = Depends(get_db)):
+    """小说深度剖析：拆解为角色 / 剧本 / 分镜细节；不生成视频，仅输出 JSON 报告。
+
+    输入两种方式二选一：
+      - `novel_text`：直接传正文（适合短篇 / 粘贴）
+      - `upload_id`：先用 /novel/upload 上传 .txt，再传此 id（适合长篇）
+    """
+    text = _resolve_novel_text(body.project_id, body.novel_text, body.upload_id, db)
+
+    # 创建 Job + 投递 celery
     payload = body.model_dump()
     payload["novel_text"] = text  # 规整后的最终文本
     job = Job(
@@ -121,6 +127,36 @@ def analyze_novel(body: NovelAnalyzeRequest, db: Session = Depends(get_db)):
     db.add(job); db.commit(); db.refresh(job)
 
     async_result = task_novel_analyze.delay(job.id, body.project_id, payload)
+    job.celery_task_id = async_result.id
+    db.add(job); db.commit(); db.refresh(job)
+    return job
+
+
+@router.post("/to-video", response_model=JobOut)
+def novel_to_video(body: NovelToVideoRequest, db: Session = Depends(get_db)):
+    """小说 → 深度剖析 → 海螺03(MiniMax H3) 文生视频，音画同出。
+
+    与 `/novel/analyze` 的区别：本接口会在剖析完成后，继续把每个分镜交给
+    海螺03 做纯文本生视频（T2VA），对白/音效随视频原生生成（显式关闭
+    remove_audio），不走"先哑剧视频、再用 TTS 事后配音合成"的老路径。
+
+    输入两种方式二选一：
+      - `novel_text`：直接传正文（适合短篇 / 粘贴）
+      - `upload_id`：先用 /novel/upload 上传 .txt，再传此 id（适合长篇）
+    """
+    text = _resolve_novel_text(body.project_id, body.novel_text, body.upload_id, db)
+
+    payload = body.model_dump()
+    payload["novel_text"] = text
+    job = Job(
+        type="novel2anime",
+        project_id=body.project_id,
+        status="pending",
+        payload={**payload, "novel_text_len": len(text)},
+    )
+    db.add(job); db.commit(); db.refresh(job)
+
+    async_result = task_novel2anime.delay(job.id, body.project_id, payload)
     job.celery_task_id = async_result.id
     db.add(job); db.commit(); db.refresh(job)
     return job
