@@ -235,18 +235,32 @@ class LLMAdapter:
         """
         base_payload: dict = {
             "model": self.model,
-            "messages": messages,
+            "messages": [dict(m) for m in messages],
             "temperature": 0.8,
             # 保证输出足够长的 JSON；不同网关对 max_tokens 命名略有差异，OpenRouter 用 max_tokens
-            "max_tokens": 4096,
+            # 加大默认值：思考型模型的思维链 + 长篇故事板 JSON 容易把 4096 耗尽导致截断
+            "max_tokens": 8192,
         }
 
-        # 对 OpenRouter 的 reasoning 模型显式关闭思考模式，否则 content 常为空
+        # 对 "思考型" 模型显式关闭思考模式，否则 content 常为空 / 把预算耗在思维链上
         model_lower = (self.model or "").lower()
-        if any(k in model_lower for k in ("nemotron", "deepseek-r1", "reasoning", "o1", "o3", "qwq")):
+        is_reasoning_model = any(
+            k in model_lower
+            for k in ("nemotron", "deepseek-r1", "reasoning", "o1", "o3", "qwq", "qwen3", "glm-4.5", "glm-4.6")
+        )
+        if is_reasoning_model:
             # OpenRouter 规范：reasoning={"exclude": true} 不返回 reasoning tokens
-            # 并把 effort 调到 low，让模型少想多输出
             base_payload["reasoning"] = {"exclude": True, "effort": "low"}
+            # Qwen3 系列（含自托管 vLLM/llama.cpp）官方支持的禁用思考参数
+            base_payload["enable_thinking"] = False
+            base_payload["chat_template_kwargs"] = {"enable_thinking": False}
+            # Qwen3 官方文档的软开关：在最后一条 user 消息末尾追加 /no_think，
+            # 各推理框架（vLLM/SGLang/llama.cpp）的 Qwen3 chat template 均会识别
+            msgs = base_payload["messages"]
+            for m in reversed(msgs):
+                if m.get("role") == "user" and isinstance(m.get("content"), str):
+                    m["content"] = m["content"].rstrip() + "\n/no_think"
+                    break
 
         async def _do_post(payload: dict) -> httpx.Response:
             logger.info(
@@ -263,21 +277,48 @@ class LLMAdapter:
             payload["response_format"] = {"type": "json_object"}
 
         r = await _do_post(payload)
-        # 如果模型不支持 response_format，大多数网关返回 400 + 关键字 response_format / unsupported
-        if r.status_code == 400 and response_format_json:
+        # 如果模型/网关不认识 response_format 或我们塞的禁用思考扩展字段，大多数网关返回
+        # 400 + 关键字 response_format / unsupported / enable_thinking / reasoning 等
+        if r.status_code == 400:
             txt = (r.text or "").lower()
-            if any(k in txt for k in ("response_format", "unsupported", "invalid parameter", "not support")):
+            if response_format_json and any(
+                k in txt for k in ("response_format", "unsupported", "invalid parameter", "not support")
+            ):
                 logger.warning(f"[LLM] {self.model} 不支持 response_format=json_object, 自动去掉重试")
-                r = await _do_post(base_payload)
+                payload.pop("response_format", None)
+                r = await _do_post(payload)
+            if r.status_code == 400 and is_reasoning_model and any(
+                k in txt for k in ("enable_thinking", "chat_template_kwargs", "reasoning", "unrecognized", "unknown field")
+            ):
+                logger.warning(f"[LLM] {self.model} 不识别禁用思考的扩展字段, 去掉后重试（保留 /no_think）")
+                payload.pop("reasoning", None)
+                payload.pop("enable_thinking", None)
+                payload.pop("chat_template_kwargs", None)
+                r = await _do_post(payload)
 
         if r.status_code != 200:
             raise AdapterError(f"LLM chat failed: {r.status_code} {r.text}")
         data = r.json()
         try:
-            msg = data["choices"][0]["message"]
+            choice = data["choices"][0]
+            msg = choice["message"]
+            finish_reason = choice.get("finish_reason")
             content = msg.get("content") or ""
-            # Reasoning 模型兜底：content 为空时去 reasoning_content / reasoning 字段取
             if not content.strip():
+                # content 为空分两种情况：
+                # 1) finish_reason == "length"：token 预算被思维链耗尽，答案根本没生成，
+                #    此时 reasoning_content 只是半截思维链，绝不能当作正式答案使用。
+                # 2) 其它（如 stop）：部分网关把真实答案只放在 reasoning_content，这才兜底使用。
+                if finish_reason == "length":
+                    reasoning_preview = (msg.get("reasoning_content") or msg.get("reasoning") or "")[:200]
+                    logger.error(
+                        f"[LLM] {self.model} 输出被截断 (finish_reason=length)，"
+                        f"思维链耗尽 max_tokens 预算，未生成正式答案。思维链片段: {reasoning_preview}"
+                    )
+                    raise AdapterError(
+                        f"LLM 输出被截断（finish_reason=length）：模型 {self.model} 把 token 预算耗在思考过程上，"
+                        f"没有生成正式内容。请尝试：1) 换一个非思考模式的模型；2) 缩短输入文本分块大小。"
+                    )
                 for alt_key in ("reasoning_content", "reasoning"):
                     alt = msg.get(alt_key)
                     if isinstance(alt, str) and alt.strip():
