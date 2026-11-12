@@ -9,7 +9,8 @@ from celery import Celery
 from .core.config import settings
 from .core.logger import logger
 from .db import SessionLocal
-from .models.orm import Job, Episode, MangaUpload, Shot
+from .models.orm import Job, Episode, MangaUpload, Shot, Character
+from .utils import clamp_shot_duration
 
 
 celery_app = Celery(
@@ -127,17 +128,45 @@ def task_generate_shot(self, job_id: str, shot_id: str, backend: str, extra: dic
             shot_image_url = shot.image_url
             shot_duration = shot.duration
             shot_episode_id = shot.episode_id
+            shot_meta = dict(shot.meta or {})
+
+            # 角色一致性：按 meta.characters_in_shot[].character_id 查出该分镜涉及
+            # 的角色参考图，自动作为 R2VA 参考图附加给海螺03，约束角色外观跨镜头一致。
+            char_ids = {
+                c.get("character_id")
+                for c in (shot_meta.get("characters_in_shot") or [])
+                if c.get("character_id")
+            }
+            reference_images: list[str] = []
+            if char_ids:
+                for ch in db.query(Character).filter(Character.id.in_(char_ids)).all():
+                    if ch.reference_images:
+                        reference_images.append(ch.reference_images[0])
+                reference_images = list(dict.fromkeys(reference_images))  # 去重保序
 
         extra = dict(extra or {})
         if not shot_image_url and "aspect_ratio" not in extra:
             extra["aspect_ratio"] = "16:9"
+        if backend == "hailuo" and reference_images and "reference_images" not in extra:
+            extra["reference_images"] = reference_images
+            logger.info(f"[generate_shot] shot={shot_id} 自动附加 {len(reference_images)} 张角色参考图")
+
+        # VideoGenRequest 顶层字段(resolution/aspect_ratio/fps/seed)可按需覆盖；
+        # 其余 backend 专属参数(reference_images/remove_audio等)必须放进嵌套的
+        # extra dict 字段，才能被各 adapter 的 _build_content/_build_payload 读到
+        # ——这里之前曾经把整个 extra 字典 **展开 当作顶层 kwargs，导致
+        # reference_images/remove_audio 等参数实际从未生效，现在统一修正。
+        _known_top_level = {"resolution", "aspect_ratio", "fps", "seed"}
+        top_level_kwargs = {k: v for k, v in extra.items() if k in _known_top_level}
+        nested_extra = {k: v for k, v in extra.items() if k not in _known_top_level}
 
         adapter = get_video_adapter(backend)
         req = VideoGenRequest(
             prompt=shot_prompt or "anime scene",
             image_url=shot_image_url,  # may be None -> adapter will run T2V
-            duration=shot_duration or 4.0,
-            **extra,
+            duration=clamp_shot_duration(shot_duration),
+            extra=nested_extra,
+            **top_level_kwargs,
         )
 
         def on_poll(stage: str, progress: float, msg: str) -> None:

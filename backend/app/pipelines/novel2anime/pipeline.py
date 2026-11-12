@@ -22,7 +22,7 @@ from ...core.exceptions import PipelineError
 from ...core.logger import logger
 from ...utils import (
     build_srt, shots_to_srt_entries, concat_videos, mux_audio,
-    pick_bgm, mix_audio, burn_subtitle, probe_duration,
+    pick_bgm, mix_audio, burn_subtitle, probe_duration, clamp_shot_duration,
 )
 from ...utils.ffmpeg_util import _ffmpeg_bin
 from ..novel_analyze import NovelAnalyzePipeline
@@ -30,9 +30,6 @@ from ..novel_analyze import NovelAnalyzePipeline
 
 ProgressCallback = Callable[[str, float, str], None]
 """(stage, progress 0-1, message)"""
-
-# 海螺03 (MiniMax H3) PDF V1.2 规定的单镜头时长范围
-_HAILUO_DURATION_MIN, _HAILUO_DURATION_MAX = 4, 15
 
 
 class Novel2AnimePipeline:
@@ -223,11 +220,7 @@ class Novel2AnimePipeline:
     # -------------------- helpers --------------------
     @staticmethod
     def _clamp_duration(d) -> float:
-        try:
-            v = float(d) if d is not None else 5.0
-        except (TypeError, ValueError):
-            v = 5.0
-        return float(max(_HAILUO_DURATION_MIN, min(_HAILUO_DURATION_MAX, round(v))))
+        return float(clamp_shot_duration(d, default=5))
 
     @staticmethod
     def _build_shot_prompt(shot: dict) -> str:

@@ -15,6 +15,7 @@ from ..core.logger import logger
 from ..db import SessionLocal, get_db
 from ..models.orm import Job, Episode, Shot, Character, Scene, Project
 from ..schemas import JobOut, ResponseModel
+from ..utils import clamp_shot_duration
 
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -113,6 +114,13 @@ def activate_job(job_id: str, db: Session = Depends(get_db)):
         existing_char_names.add(name.lower())
         chars_created += 1
 
+    # 刷新到 session（不提交）以拿到新建角色的 id，供下面按名字匹配 character_id
+    db.flush()
+    char_id_by_name: dict[str, str] = {
+        c.name.strip().lower(): c.id
+        for c in db.query(Character).filter(Character.project_id == job.project_id).all()
+    }
+
     # ---------- 2. 场景去重导入（从 storyboard[].environment 提取唯一地点） ----------
     existing_scene_names = {
         s.name.strip().lower()
@@ -164,6 +172,16 @@ def activate_job(job_id: str, db: Session = Depends(get_db)):
 
         for shot in storyboard:
             chars_in_shot = shot.get("characters_in_shot") or []
+            # 按角色名匹配出 character_id，写进 meta，供生成分镜视频时自动附加角色参考图
+            # （保持角色一致性：task_generate_shot 会据此查 Character.reference_images）
+            chars_in_shot_enriched = []
+            for c in chars_in_shot:
+                c2 = dict(c)
+                cid = char_id_by_name.get((c.get("name") or "").strip().lower())
+                if cid:
+                    c2["character_id"] = cid
+                chars_in_shot_enriched.append(c2)
+
             db.add(Shot(
                 episode_id=ep.id,
                 index=int(shot.get("index") or 0),
@@ -171,14 +189,14 @@ def activate_job(job_id: str, db: Session = Depends(get_db)):
                 dialogue=shot.get("dialogue") or None,
                 speaker=shot.get("speaker") or None,
                 emotion=(chars_in_shot[0].get("emotion") if chars_in_shot else None),
-                duration=float(shot.get("duration") or 4.0),
+                duration=float(clamp_shot_duration(shot.get("duration"))),
                 model_backend="hailuo",
                 meta={
                     "timecode": shot.get("timecode"),
                     "shot_type": shot.get("shot_type"),
                     "camera_motion": shot.get("camera_motion"),
                     "environment": shot.get("environment"),
-                    "characters_in_shot": chars_in_shot,
+                    "characters_in_shot": chars_in_shot_enriched,
                     "sfx": shot.get("sfx"),
                     "image_prompt": shot.get("image_prompt"),
                     "video_prompt": shot.get("video_prompt"),

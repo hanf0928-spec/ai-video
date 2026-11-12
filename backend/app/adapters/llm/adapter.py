@@ -81,8 +81,8 @@ SYSTEM_NOVEL_ANALYZE_PROMPT = """\
   "storyboard": [
     {
       "index": 0,
-      "timecode": "00:00:00~00:00:04",
-      "duration": 4,
+      "timecode": "00:00:00~00:00:05",
+      "duration": 5,
       "shot_type": "大特写/特写/近景/中景/全景/远景/大远景",
       "camera_motion": "固定/推/拉/摇/移/跟/升降/旋转",
       "environment": {
@@ -105,8 +105,8 @@ SYSTEM_NOVEL_ANALYZE_PROMPT = """\
       "speaker": "说话人（可空）",
       "sfx": "音效建议（可空）",
       "text_prompt": "本镜头的文字描述 prompt（中文、一句话浓缩）",
-      "image_prompt": "文生图 prompt（英文、尽量具体，可直接喂给 Flux/SDXL/海螺）",
-      "video_prompt": "镜头/动作补充 prompt（描述镜头移动和角色动作、英文）"
+      "image_prompt": "英文。海螺03(MiniMax H3)专用的文生图/首帧 prompt，必须按「主体外貌服装细节 + 具体动作姿态 + 镜头角度与景别 + 环境背景与光线 + 画面风格关键词」的顺序描写，写出至少3个可视化具体细节（发型发色、服装材质与颜色、手部或面部肌肉动作、背景道具、光源方向），严禁使用'anime cinematic scene'/'beautiful girl'/'high quality'这类空洞套话",
+      "video_prompt": "英文。描述本镜头在 duration 秒内从开场到结束的运镜与动作演变：开场状态 -> 镜头运动方向与速度（如 slow push-in / pan left / static tripod shot）-> 角色动作或表情的起止变化 -> 结束状态；必须让画面在 duration 秒内有明确的变化弧线，不要只描述静态画面"
     }
   ],
   "notes": "其他给制作团队的提醒（如：主角 A 服装前后一致、第 5 镜用慢动作强调情感）"
@@ -118,7 +118,9 @@ SYSTEM_NOVEL_ANALYZE_PROMPT = """\
 3. environment.time_of_day、expression、emotion、shot_type、camera_motion 必须从枚举中选。
 4. 保持 **角色一致性**：同一角色在不同分镜里的 name 必须完全一致，外貌/服装基线写在 characters[]，分镜内只写变化点。
 5. index 从 0 开始、连续递增；若请求里给了 `start_index`，请从该值接着排。
-6. 不要输出任何 Markdown 代码围栏或注释，只输出纯 JSON。
+6. duration 必须是 4、5、6 三者之一（整数秒）：海螺03(MiniMax H3)最短支持4秒单镜头，产品要求不超过6秒以保证剪辑节奏紧凑，不要生成超出此范围的时长。
+7. image_prompt / video_prompt 严禁使用模糊套话或重复模板化描述（这是"AI抽卡感"的根源），必须写出具体、可视化、因镜头而异的细节；同一角色在不同分镜的 image_prompt 中，外貌/服装描述要与 characters[] 保持一致但不要逐字复制整段，要结合本镜头的姿态与光线自然改写，避免每个分镜都用相同措辞。
+8. 不要输出任何 Markdown 代码围栏或注释，只输出纯 JSON。
 """
 
 
@@ -157,8 +159,8 @@ SYSTEM_PANEL_ANALYZE_PROMPT = """\
       "index": 0,
       "page": 0,
       "panel_order": 0,
-      "timecode": "00:00:00~00:00:04",
-      "duration": 4,
+      "timecode": "00:00:00~00:00:05",
+      "duration": 5,
       "shot_type": "大特写/特写/近景/中景/全景/远景/大远景",
       "camera_motion": "固定/推/拉/摇/移/跟/升降/旋转",
       "environment": {
@@ -180,8 +182,8 @@ SYSTEM_PANEL_ANALYZE_PROMPT = """\
       "dialogue": "台词（可空）",
       "speaker": "说话人（可空）",
       "sfx": "音效建议（可空）",
-      "image_prompt": "文生图/图生视频 prompt（英文、尽量具体，可直接喂给 Flux/SDXL/海螺）",
-      "video_prompt": "镜头/动作补充 prompt（描述镜头移动和角色动作）"
+      "image_prompt": "英文。海螺03(MiniMax H3)专用的文生图/首帧 prompt，必须按「主体外貌服装细节 + 具体动作姿态 + 镜头角度与景别 + 环境背景与光线 + 画面风格关键词」的顺序描写，写出至少3个可视化具体细节（发型发色、服装材质与颜色、手部或面部肌肉动作、背景道具、光源方向），严禁使用'anime cinematic scene'/'beautiful girl'/'high quality'这类空洞套话",
+      "video_prompt": "英文。描述本镜头在 duration 秒内从开场到结束的运镜与动作演变：开场状态 -> 镜头运动方向与速度（如 slow push-in / pan left / static tripod shot）-> 角色动作或表情的起止变化 -> 结束状态；必须让画面在 duration 秒内有明确的变化弧线，不要只描述静态画面"
     }
   ],
   "notes": "其他给制作团队的提醒（如：主角 A 服装前后一致、第 5 镜用慢动作强调情感）"
@@ -191,7 +193,9 @@ SYSTEM_PANEL_ANALYZE_PROMPT = """\
 1. storyboard 长度必须等于输入 panels 数量，index 从 0 开始，和 panel_order 一一对应。
 2. 所有字符串用中文（image_prompt / video_prompt 用英文，便于喂给扩散模型）。
 3. environment.time_of_day、expression、emotion、shot_type、camera_motion 必须从枚举中选。
-4. 不要输出任何 Markdown 代码围栏或注释，只输出纯 JSON。
+4. duration 必须是 4、5、6 三者之一（整数秒）：海螺03(MiniMax H3)最短支持4秒单镜头，产品要求不超过6秒以保证剪辑节奏紧凑。
+5. image_prompt / video_prompt 严禁使用模糊套话或重复模板化描述（这是"AI抽卡感"的根源），必须写出具体、可视化、因镜头而异的细节；同一角色在不同分镜的 image_prompt 中，外貌/服装描述要与 characters[] 保持一致但不要逐字复制整段，要结合本镜头的姿态与光线自然改写，避免每个分镜都用相同措辞。
+6. 不要输出任何 Markdown 代码围栏或注释，只输出纯 JSON。
 """
 
 

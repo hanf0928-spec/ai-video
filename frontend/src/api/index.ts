@@ -34,6 +34,14 @@ export const deleteShot = (id: string) => http.delete(`/shots/${id}`).then((r) =
 // ---------- Library ----------
 export const listCharacters = (projectId: string) => http.get(`/projects/${projectId}/characters`).then((r) => r.data)
 export const createCharacter = (data: any) => http.post('/characters', data).then((r) => r.data)
+export const deleteCharacter = (id: string) => http.delete(`/characters/${id}`).then((r) => r.data)
+export const uploadCharacterAvatar = (characterId: string, file: File) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return http.post(`/characters/${characterId}/avatar`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data)
+}
+export const deleteCharacterAvatar = (characterId: string) =>
+  http.delete(`/characters/${characterId}/avatar`).then((r) => r.data)
 export const listScenes = (projectId: string) => http.get(`/projects/${projectId}/scenes`).then((r) => r.data)
 export const createScene = (data: any) => http.post('/scenes', data).then((r) => r.data)
 

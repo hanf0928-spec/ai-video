@@ -18,6 +18,7 @@ from ...adapters import get_llm_adapter
 from ...core.config import settings
 from ...core.exceptions import PipelineError
 from ...core.logger import logger
+from ...utils import clamp_shot_duration
 
 # 复用 manga2anime 的 preprocessing 组件（避免重复实现）
 from ..manga2anime.loader import load_pages
@@ -191,11 +192,8 @@ class MangaAnalyzePipeline:
         abs_output = Path(settings.OUTPUT_DIR).resolve()
         cursor = 0.0
         for i, shot in enumerate(storyboard):
-            # 兼容 LLM 没给 duration 的情况
-            try:
-                dur = float(shot.get("duration") or self.shot_duration)
-            except (TypeError, ValueError):
-                dur = self.shot_duration
+            # 统一夹到 4~6 秒（海螺03最短4s + 产品层要求不超过6s，避免分镜过长拖沓）
+            dur = clamp_shot_duration(shot.get("duration"), default=int(self.shot_duration) or 5)
             shot["duration"] = dur
             # 补时间码（LLM 自己给的格式可能五花八门，这里统一覆盖）
             shot["timecode"] = f"{self._fmt_tc(cursor)}~{self._fmt_tc(cursor + dur)}"

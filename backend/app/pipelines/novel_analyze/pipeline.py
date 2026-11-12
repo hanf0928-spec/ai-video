@@ -24,6 +24,7 @@ from ...adapters import get_llm_adapter
 from ...core.config import settings
 from ...core.exceptions import PipelineError
 from ...core.logger import logger
+from ...utils import clamp_shot_duration
 
 
 ProgressCallback = Callable[[str, float, str], None]
@@ -319,10 +320,8 @@ class NovelAnalyzePipeline:
         cursor = 0.0
         for i, shot in enumerate(shots):
             shot["index"] = i
-            try:
-                dur = float(shot.get("duration") or self.shot_duration)
-            except (TypeError, ValueError):
-                dur = self.shot_duration
+            # 统一夹到 4~6 秒（海螺03最短4s + 产品层要求不超过6s，避免分镜过长拖沓）
+            dur = clamp_shot_duration(shot.get("duration"), default=int(self.shot_duration) or 5)
             shot["duration"] = dur
             shot["timecode"] = f"{self._fmt_tc(cursor)}~{self._fmt_tc(cursor + dur)}"
             cursor += dur

@@ -180,14 +180,24 @@ class HailuoAdapter(VideoAdapter):
                 "role": "last_frame",
             })
 
-        # R2VA 参考资源（extra 透传）：最多 9 张参考图
+        # R2VA 参考资源（extra 透传）：最多 9 张参考图，用于角色一致性（保持角色外观跨镜头统一）。
+        # 上游（celery task_generate_shot）直接传 Character.reference_images 里存的本地磁盘路径，
+        # 这里统一转换成公网 URL；若已经是 http(s) URL 则原样使用。
         for ref_img in (extra.get("reference_images") or [])[:9]:
-            if ref_img:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": ref_img},
-                    "role": "reference_image",
-                })
+            if not ref_img:
+                continue
+            url = ref_img
+            if not (url.startswith("http://") or url.startswith("https://")):
+                try:
+                    url = self._local_path_to_public_url(ref_img)
+                except AdapterError as e:
+                    logger.warning(f"[Hailuo] reference_image 本地路径转公网URL失败，已跳过: {e}")
+                    continue
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": url},
+                "role": "reference_image",
+            })
         if extra.get("reference_video"):
             content.append({
                 "type": "video_url",
