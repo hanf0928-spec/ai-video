@@ -55,13 +55,15 @@ async def render_episode(
         if shot.video_url and Path(shot.video_url).exists():
             shot_videos.append(shot.video_url)
             continue
-        if not shot.image_url:
-            raise PipelineError(f"shot {shot.id} has no image_url")
 
+        # 有首帧图 -> I2V；没有首帧图 -> T2V（与单分镜生成 /generate/shot 的逻辑保持一致，
+        # 支持从"任务队列→启用"导入的纯文本分镜，不再强制要求必须有首帧图）。
+        has_image = bool(shot.image_url)
         req = VideoGenRequest(
             prompt=shot.prompt or "anime scene",
-            image_path=shot.image_url,
+            image_path=shot.image_url if has_image else None,
             duration=shot.duration or 4.0,
+            **({} if has_image else {"aspect_ratio": "16:9"}),
         )
         try:
             res = await adapter.generate(req)
@@ -70,8 +72,12 @@ async def render_episode(
             else:
                 raise PipelineError(res.message or "generation failed")
         except Exception as e:  # noqa: BLE001
-            logger.warning(f"shot {i} fallback to still image: {e}")
-            image_to_video(shot.image_url, shot.duration or 4.0, str(dst))
+            if has_image:
+                logger.warning(f"shot {i} fallback to still image: {e}")
+                image_to_video(shot.image_url, shot.duration or 4.0, str(dst))
+            else:
+                # T2V 没有首帧图可降级，只能向上抛出，让调用方知晓具体哪个分镜失败
+                raise PipelineError(f"shot {shot.id} (T2V) generation failed: {e}") from e
         shot.video_url = str(dst)
         shot.status = "done"
         db.add(shot)
