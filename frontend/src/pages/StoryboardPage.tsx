@@ -1,11 +1,11 @@
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
-  Button, Card, Col, Empty, Form, Input, InputNumber, Row, Select, Space, Tag, Typography, message,
+  Button, Card, Col, Empty, Form, Input, InputNumber, Progress, Row, Select, Space, Tag, Typography, message,
 } from 'antd'
 import { PlayCircleOutlined, PlusOutlined } from '@ant-design/icons'
-import { listShots, createShot, updateShot, generateShot } from '../api'
+import { listShots, createShot, updateShot, generateShot, openJobWS } from '../api'
 import type { Shot } from '../types'
 
 const { Title } = Typography
@@ -16,6 +16,14 @@ export default function StoryboardPage() {
   // 本集文生视频(T2V)的默认画幅，由新建表单维护；点击“生成”时附加到 extra
   const [aspectRatio, setAspectRatio] = useState<string>('16:9')
   const [form] = Form.useForm()
+  // 生成中分镜的实时进度：shotId -> { progress, message }
+  const [genProgress, setGenProgress] = useState<Record<string, { progress: number; message: string }>>({})
+  const wsRefs = useRef<Record<string, WebSocket>>({})
+
+  useEffect(() => () => {
+    // 卸载时关闭所有仍在监听的 WebSocket，避免泄漏
+    Object.values(wsRefs.current).forEach((ws) => ws.close())
+  }, [])
 
   const load = async () => {
     if (!episodeId) return
@@ -38,20 +46,48 @@ export default function StoryboardPage() {
     const isT2V = !s.image_url
     if (isT2V) {
       message.info({ content: `未设置首帧图，将走文生视频 (T2V ${aspectRatio})`, key: s.id })
-    } else {
-      message.loading({ content: '生成中...', key: s.id })
     }
+    // 关闭该分镜上一次残留的 WS（如有）
+    wsRefs.current[s.id]?.close()
+
+    // 云端视频生成通常需要 1~10 分钟（submit + 轮询），这里改为异步 Job +
+    // WebSocket 实时跟踪，而不是等待一个同步 HTTP 响应——否则浏览器/Nginx
+    // 的默认超时（60s）会把连接掐断，看起来像“任务没有启动”。
+    setGenProgress((p) => ({ ...p, [s.id]: { progress: 0, message: '提交中...' } }))
     try {
-      await generateShot({
+      const job = await generateShot({
         shot_id: s.id,
         backend: s.model_backend || 'hailuo',
         // T2V 需要显式比例，有首帧图时后端会忽略
         extra: isT2V ? { aspect_ratio: aspectRatio } : undefined,
       })
-      message.success({ content: '生成完成', key: s.id })
-      await load()
+      await load() // 刷新 shot.status -> running
+
+      const ws = openJobWS(job.id, (snap) => {
+        setGenProgress((p) => ({
+          ...p,
+          [s.id]: { progress: snap.progress || 0, message: snap.message || snap.stage || '' },
+        }))
+        if (snap.status === 'success') {
+          message.success({ content: '生成完成', key: s.id })
+          setGenProgress((p) => {
+            const next = { ...p }; delete next[s.id]; return next
+          })
+          load()
+        } else if (snap.status === 'failed' || snap.status === 'cancelled') {
+          message.error({ content: snap.message || '生成失败', key: s.id })
+          setGenProgress((p) => {
+            const next = { ...p }; delete next[s.id]; return next
+          })
+          load()
+        }
+      })
+      wsRefs.current[s.id] = ws
     } catch (e: any) {
       message.error({ content: e.message, key: s.id })
+      setGenProgress((p) => {
+        const next = { ...p }; delete next[s.id]; return next
+      })
     }
   }
 
@@ -114,14 +150,25 @@ export default function StoryboardPage() {
       </Card>
 
       <div className="card-grid">
-        {shots.map((s) => (
+        {shots.map((s) => {
+          const gen = genProgress[s.id]
+          const isGenerating = !!gen || s.status === 'running'
+          return (
           <Card
             key={s.id}
             size="small"
             title={<span>#{s.index + 1} <Tag>{s.model_backend}</Tag></span>}
-            extra={<Tag color={s.status === 'done' ? 'green' : 'default'}>{s.status}</Tag>}
+            extra={<Tag color={s.status === 'done' ? 'green' : s.status === 'failed' ? 'red' : 'default'}>{s.status}</Tag>}
             actions={[
-              <Button type="link" icon={<PlayCircleOutlined />} onClick={() => onGenerate(s)}>生成</Button>,
+              <Button
+                type="link"
+                icon={<PlayCircleOutlined />}
+                loading={isGenerating}
+                disabled={isGenerating}
+                onClick={() => onGenerate(s)}
+              >
+                {isGenerating ? '生成中' : '生成'}
+              </Button>,
             ]}
           >
             <div style={{ minHeight: 100 }}>
@@ -137,12 +184,19 @@ export default function StoryboardPage() {
             </div>
             <p style={{ marginTop: 8, fontSize: 12 }}>{s.prompt}</p>
             {s.dialogue && <p style={{ fontSize: 12, color: '#8b5cf6' }}>💬 {s.dialogue}</p>}
+            {gen && (
+              <div style={{ marginTop: 8 }}>
+                <Progress percent={Math.round(gen.progress * 100)} size="small" status="active" />
+                <div style={{ fontSize: 11, color: '#999' }}>{gen.message}</div>
+              </div>
+            )}
             {s.video_url && (
               <video src={`/static/outputs/${s.video_url.split('/outputs/')[1]}`}
                      controls style={{ width: '100%' }} />
             )}
           </Card>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

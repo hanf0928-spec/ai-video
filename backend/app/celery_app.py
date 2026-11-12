@@ -9,7 +9,7 @@ from celery import Celery
 from .core.config import settings
 from .core.logger import logger
 from .db import SessionLocal
-from .models.orm import Job, Episode, MangaUpload
+from .models.orm import Job, Episode, MangaUpload, Shot
 
 
 celery_app = Celery(
@@ -99,6 +99,117 @@ def task_manga2anime(self, job_id: str, upload_id: str, project_id: str, params:
         logger.exception(f"manga2anime job {job_id} failed")
         _update_job(job_id, status="failed", message=str(e))
         raise
+
+
+@celery_app.task(bind=True, name="task.generate_shot")
+def task_generate_shot(self, job_id: str, shot_id: str, backend: str, extra: dict):
+    """单个分镜生成视频（I2V 有首帧图 / T2V 无首帧图均走此任务）。
+
+    之前 /generate/shot 是同步 HTTP 接口内直接 submit+轮询（最长30分钟），
+    超出前端 axios / Nginx 默认 60s 超时后连接被掐断，看起来像"任务没启动"。
+    现在统一走 Celery，由 Job.progress/stage/message 承载真实状态。
+    """
+    from .adapters import VideoGenRequest, get_video_adapter
+
+    _update_job(job_id, status="running", stage="submit", progress=0.05, message="提交生成任务")
+
+    try:
+        # 先在一个打开的 session 内把本任务需要的字段读出到局部变量，
+        # 避免 session 关闭（commit 默认 expire_on_commit）后再访问导致
+        # DetachedInstanceError。
+        with SessionLocal() as db:
+            shot = db.get(Shot, shot_id)
+            if not shot:
+                raise RuntimeError(f"shot not found: {shot_id}")
+            shot.status = "running"
+            db.add(shot); db.commit()
+            shot_prompt = shot.prompt
+            shot_image_url = shot.image_url
+            shot_duration = shot.duration
+            shot_episode_id = shot.episode_id
+
+        extra = dict(extra or {})
+        if not shot_image_url and "aspect_ratio" not in extra:
+            extra["aspect_ratio"] = "16:9"
+
+        adapter = get_video_adapter(backend)
+        req = VideoGenRequest(
+            prompt=shot_prompt or "anime scene",
+            image_url=shot_image_url,  # may be None -> adapter will run T2V
+            duration=shot_duration or 4.0,
+            **extra,
+        )
+
+        def on_poll(stage: str, progress: float, msg: str) -> None:
+            _check_cancel(job_id)
+            _update_job(job_id, stage=stage, progress=progress, message=msg)
+
+        res = asyncio.run(_poll_shot_generate(adapter, req, on_poll))
+        if res.status != "success":
+            with SessionLocal() as db:
+                shot = db.get(Shot, shot_id)
+                if shot:
+                    shot.status = "failed"
+                    db.add(shot); db.commit()
+            err = res.message or "generation failed"
+            _update_job(job_id, status="failed", message=err)
+            raise RuntimeError(err)
+
+        dst = settings.OUTPUT_DIR_PATH / shot_episode_id / f"shot_{shot_id}.mp4"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        asyncio.run(adapter.download(res, str(dst)))
+
+        with SessionLocal() as db:
+            shot = db.get(Shot, shot_id)
+            if shot:
+                shot.video_url = str(dst)
+                shot.status = "done"
+                shot.model_backend = backend
+                db.add(shot); db.commit()
+
+        result = {"video_url": str(dst), "shot_id": shot_id}
+        _update_job(job_id, status="success", progress=1.0, stage="done", result=result, message="完成")
+        return result
+    except CancelledError:
+        logger.info(f"generate_shot job {job_id} cancelled by user")
+        with SessionLocal() as db:
+            shot = db.get(Shot, shot_id)
+            if shot:
+                shot.status = "pending"
+                db.add(shot); db.commit()
+        _update_job(job_id, status="cancelled", stage="cancelled", message="用户已取消")
+    except Exception as e:
+        logger.exception(f"generate_shot job {job_id} failed")
+        with SessionLocal() as db:
+            shot = db.get(Shot, shot_id)
+            if shot and shot.status != "failed":
+                shot.status = "failed"
+                db.add(shot); db.commit()
+        _update_job(job_id, status="failed", message=str(e))
+        raise
+
+
+async def _poll_shot_generate(adapter, req, on_progress):
+    """submit + 轮询，期间持续回报进度，复用 VideoAdapter 既有的 submit/query 接口。"""
+    res = await adapter.submit(req)
+    on_progress("submit", 0.1, f"任务已提交 (task_id={res.task_id})")
+    start = asyncio.get_event_loop().time()
+    poll_count = 0
+    timeout = 1800.0
+    poll_interval = 15.0
+    while res.status in ("pending", "running"):
+        await asyncio.sleep(poll_interval)
+        poll_count += 1
+        res = await adapter.query(res.task_id)
+        elapsed = asyncio.get_event_loop().time() - start
+        # 进度估算：0.1~0.9 之间，按轮询次数线性递增但不超过 0.9
+        progress = min(0.1 + poll_count * 0.05, 0.9)
+        on_progress("polling", progress, f"云端生成中 第{poll_count}次轮询 已等待{elapsed:.0f}s")
+        if elapsed > timeout:
+            res.status = "failed"
+            res.message = f"timeout after {timeout:.0f}s ({poll_count} polls)"
+            break
+    return res
 
 
 @celery_app.task(bind=True, name="task.render_episode")
